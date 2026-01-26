@@ -552,3 +552,105 @@
     transform: none;
   }
   
+  /* onboarding hints + success */
+.hint{
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted2);
+}
+
+.success{
+  color: rgba(20, 120, 60, 0.92);
+  font-size: 13px;
+  line-height: 1.5;
+}
+body.theme-night .success{
+  color: rgba(160, 255, 200, 0.92);
+}
+
+/* button disabled */
+.btn:disabled{
+  opacity: .55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* vote selected + disabled */
+.voteBtn:disabled{
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.voteBtnOn{
+  opacity: 1;
+  color: var(--text);
+  background: var(--btnBg);
+  border-color: var(--stroke2);
+  transform: translateY(-1px) scale(1.04);
+}
+
+.success{
+  color: rgba(20, 120, 60, 0.92);
+  font-size: 13px;
+  line-height: 1.5;
+}
+body.theme-night .success{
+  color: rgba(160, 255, 200, 0.92);
+}
+
+.btn:disabled{
+  opacity: .55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* =========================
+   TOAST (CENTER, PREMIUM)
+   ========================= */
+   .toastCenterOverlay{
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 22px;
+    z-index: 9999;
+    background: rgba(0,0,0,0.10);
+    backdrop-filter: blur(10px);
+  }
+  
+  body.theme-night .toastCenterOverlay{
+    background: rgba(0,0,0,0.28);
+  }
+  
+  .toastCenter{
+    min-width: 320px;
+    max-width: 520px;
+    padding: 16px 18px;
+    border-radius: 18px;
+    border: 1px solid var(--stroke);
+    background: linear-gradient(180deg, var(--card), var(--card2));
+    box-shadow: var(--shadowCard);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+    text-align: center;
+    animation: toastPop .18s ease-out;
+  }
+  
+  @keyframes toastPop{
+    from{ transform: translateY(6px) scale(.98); opacity: 0; }
+    to{ transform: translateY(0) scale(1); opacity: 1; }
+  }
+  
+  /* accent by type (subtle premium border) */
+  .toast-success{
+    border-color: color-mix(in srgb, rgba(20,120,60,0.55) 45%, var(--stroke));
+  }
+  .toast-error{
+    border-color: color-mix(in srgb, rgba(210,40,40,0.55) 45%, var(--stroke));
+  }
+  .toast-info{
+    border-color: color-mix(in srgb, rgba(0,122,255,0.45) 45%, var(--stroke));
+  }
+  

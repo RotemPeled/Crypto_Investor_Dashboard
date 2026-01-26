@@ -7,12 +7,19 @@ import Shell from "../ui/Shell";
 import { Button } from "../ui/Form";
 import Section from "../ui/Section";
 import VoteBar from "../ui/VoteBar";
+import { useToast } from "../ui/ToastProvider";
 
 export default function Dashboard() {
   const nav = useNavigate();
   const { logout } = useAuth();
+  const { push } = useToast();
+
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
+
+  // persistent selection (in-session)
+  const [votes, setVotes] = useState({});       // key -> 1 / -1
+  const [voteBusy, setVoteBusy] = useState({}); // key -> true
 
   async function load() {
     setErr("");
@@ -30,9 +37,32 @@ export default function Dashboard() {
   }
 
   async function vote(section, item, value) {
+    const key = `${section}::${item}`;
+    const current = votes[key] || 0;
+
+    // same vote again => do nothing
+    if (current === value) {
+      return;
+    }
+
+    if (voteBusy[key]) return;
+
+    // optimistic UI: keep selected
+    setVotes((p) => ({ ...p, [key]: value }));
+    setVoteBusy((p) => ({ ...p, [key]: true }));
+
     try {
       await saveVote({ section, item, value });
-    } catch {}
+    } catch {
+      // rollback
+      setVotes((p) => ({ ...p, [key]: current }));
+    } finally {
+      setVoteBusy((p) => {
+        const copy = { ...p };
+        delete copy[key];
+        return copy;
+      });
+    }
   }
 
   useEffect(() => {
@@ -80,7 +110,7 @@ export default function Dashboard() {
 
   return (
     <Shell
-      title="Today Dashboard"
+      title="Today's Dashboard"
       right={
         <div className="row">
           <Button
@@ -96,11 +126,12 @@ export default function Dashboard() {
       }
     >
       <div className="dashboardGrid2x2">
-        {/* 1) Prices (vote next to title) */}
         <Section
           title="Coin Prices"
           headerRight={
             <VoteBar
+              selected={votes["prices::prices_block"] || 0}
+              disabled={!!voteBusy["prices::prices_block"]}
               onUp={() => vote("prices", "prices_block", 1)}
               onDown={() => vote("prices", "prices_block", -1)}
             />
@@ -109,11 +140,12 @@ export default function Dashboard() {
           <pre className="preSoft">{JSON.stringify(prices?.data, null, 2)}</pre>
         </Section>
 
-        {/* 2) AI Insight (vote next to title) */}
         <Section
           title="AI Insight of the Day"
           headerRight={
             <VoteBar
+              selected={votes["ai_insight::today_insight"] || 0}
+              disabled={!!voteBusy["ai_insight::today_insight"]}
               onUp={() => vote("ai_insight", "today_insight", 1)}
               onDown={() => vote("ai_insight", "today_insight", -1)}
             />
@@ -124,30 +156,36 @@ export default function Dashboard() {
           </div>
         </Section>
 
-        {/* 3) News (each article has its own vote) */}
         <Section title="Market News">
           <div className="newsList">
-            {(news?.data || []).slice(0, 6).map((n, idx) => (
-              <div key={idx} className="tile">
-                <div className="tileTitle">{n.title}</div>
-                <div className="tileMeta">{n.published_at || "—"}</div>
+            {(news?.data || []).slice(0, 6).map((n, idx) => {
+              const itemKey = n.title || String(idx);
+              const k = `news::${itemKey}`;
+              return (
+                <div key={idx} className="tile">
+                  <div className="tileTitle">{n.title}</div>
+                  <div className="tileMeta">{n.published_at || "—"}</div>
 
-                <div className="metaFooter">
-                  <VoteBar
-                    onUp={() => vote("news", n.title || String(idx), 1)}
-                    onDown={() => vote("news", n.title || String(idx), -1)}
-                  />
+                  <div className="metaFooter">
+                    <VoteBar
+                      selected={votes[k] || 0}
+                      disabled={!!voteBusy[k]}
+                      onUp={() => vote("news", itemKey, 1)}
+                      onDown={() => vote("news", itemKey, -1)}
+                    />
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </Section>
 
-        {/* 4) Meme (vote next to title + image fills the card) */}
         <Section
           title="Meme"
           headerRight={
             <VoteBar
+              selected={votes[`meme::${meme?.url || "meme"}`] || 0}
+              disabled={!!voteBusy[`meme::${meme?.url || "meme"}`]}
               onUp={() => vote("meme", meme?.url || "meme", 1)}
               onDown={() => vote("meme", meme?.url || "meme", -1)}
             />

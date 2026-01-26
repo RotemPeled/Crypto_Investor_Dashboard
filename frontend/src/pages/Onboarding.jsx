@@ -4,6 +4,7 @@ import { ENDPOINTS } from "../api/endpoints";
 import { useNavigate } from "react-router-dom";
 import Shell from "../ui/Shell";
 import { Button } from "../ui/Form";
+import { useToast } from "../ui/ToastProvider";
 
 function Pill({ active, onClick, children }) {
   return (
@@ -20,9 +21,11 @@ function Pill({ active, onClick, children }) {
 
 export default function Onboarding() {
   const nav = useNavigate();
-  const [err, setErr] = useState("");
+  const { push } = useToast();
 
-  // ✅ Defaults: nothing selected
+  const [err, setErr] = useState("");
+  const [saving, setSaving] = useState(false);
+
   const [cryptoAssets, setCryptoAssets] = useState([]);
   const [investorType, setInvestorType] = useState("");
   const [contentType, setContentType] = useState([]);
@@ -36,33 +39,35 @@ export default function Onboarding() {
   }
 
   const isValid = useMemo(() => {
-    return cryptoAssets.length > 0  && investorType && contentType.length > 0;
-  }, [cryptoAssets, contentType]);
+    return cryptoAssets.length > 0 && investorType && contentType.length > 0;
+  }, [cryptoAssets, investorType, contentType]);
 
   async function onSubmit(e) {
     e.preventDefault();
     setErr("");
+    if (saving) return;
 
     if (!isValid) {
-      if (cryptoAssets.length === 0 && contentType.length === 0) {
-        setErr("Please select at least one crypto asset, an investor type, and one content type.");
-    } else if (cryptoAssets.length === 0) {
-        setErr("Please select at least one crypto asset.");
-      } else {
-        setErr("Please select at least one content type.");
-      }
+      setErr("Select at least 1 asset, 1 investor type, and 1 content type.");
       return;
     }
 
     try {
+      setSaving(true);
       await api.post(ENDPOINTS.onboarding, {
         crypto_assets: cryptoAssets,
         investor_type: investorType,
         content_type: contentType,
       });
-      nav("/dashboard");
+
+      push("Saved! Your choices will personalize the dashboard.", "success", 3000);
+      setTimeout(() => nav("/dashboard"), 700);
     } catch (e2) {
-      setErr(e2?.response?.data?.detail || "Failed to save onboarding");
+      const msg = e2?.response?.data?.detail || "Failed to save onboarding";
+      setErr(msg);
+      push(msg, "error", 3000);
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -83,6 +88,7 @@ export default function Onboarding() {
                 </Pill>
               ))}
             </div>
+            <div className="hint">Pick at least 1.</div>
           </div>
         </div>
 
@@ -96,6 +102,7 @@ export default function Onboarding() {
                 </Pill>
               ))}
             </div>
+            <div className="hint">Pick exactly 1.</div>
           </div>
         </div>
 
@@ -113,6 +120,7 @@ export default function Onboarding() {
                 </Pill>
               ))}
             </div>
+            <div className="hint">Pick at least 1.</div>
           </div>
         </div>
 
@@ -120,14 +128,8 @@ export default function Onboarding() {
 
         <div className="formActions">
           <div className="formActionsRight">
-            <Button
-              variant="primary"
-              type="submit"
-              disabled={!isValid}
-              aria-disabled={!isValid}
-              title={!isValid ? "Select at least one asset and one content type" : "Save"}
-            >
-              Save
+            <Button variant="primary" type="submit" disabled={!isValid || saving}>
+              {saving ? "Saving…" : "Save"}
             </Button>
           </div>
         </div>
