@@ -1,7 +1,7 @@
 import os
 import jwt
 from datetime import datetime, timedelta
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import text
 import bcrypt
@@ -375,3 +375,24 @@ def vote(data: VoteReq, user_id: int = Depends(get_user_id)):
         conn.commit()
 
     return {"message": "vote saved"}
+
+@app.get("/votes")
+def get_votes(date: str = Query("today"), user_id: int = Depends(get_user_id)):
+    with engine.connect() as conn:
+        if date == "today":
+            q = text("""
+                SELECT section, item, value
+                FROM user_votes
+                WHERE user_id = :user_id
+                  AND created_at::date = CURRENT_DATE
+            """)
+            rows = conn.execute(q, {"user_id": user_id}).fetchall()
+        else:
+            q = text("""
+                SELECT section, item, value
+                FROM user_votes
+                WHERE user_id = :user_id
+            """)
+            rows = conn.execute(q, {"user_id": user_id}).fetchall()
+
+    return [{"section": r[0], "item": r[1], "value": r[2]} for r in rows]

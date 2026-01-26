@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { getDashboard } from "../api/dashboard";
-import { saveVote } from "../api/votes";
+import { saveVote, getVotesToday } from "../api/votes";
 import { useAuth } from "../auth/AuthProvider";
 import { useNavigate } from "react-router-dom";
 import Shell from "../ui/Shell";
@@ -21,11 +21,19 @@ export default function Dashboard() {
   const [votes, setVotes] = useState({});       // key -> 1 / -1
   const [voteBusy, setVoteBusy] = useState({}); // key -> true
 
+
   async function load() {
     setErr("");
     try {
       const d = await getDashboard();
       setData(d);
+      const todayVotes = await getVotesToday(); 
+      const map = {};
+      for (const v of todayVotes) {
+        map[`${v.section}::${v.item}`] = v.value;
+      }
+      setVotes(map);
+
     } catch (e2) {
       if (e2?.response?.status === 401) {
         logout();
