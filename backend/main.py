@@ -101,13 +101,60 @@ def load_user_preferences(conn, user_id: int):
         "content_type": content,
     }
 
-def pick_meme():
-    memes = [
-        {"title": "HODL mode", "url": "https://i.imgflip.com/1bij.jpg"},
-        {"title": "To the moon", "url": "https://i.imgflip.com/30b1gx.jpg"},
-        {"title": "Buy high sell low", "url": "https://i.imgflip.com/1ur9b0.jpg"},
-    ]
-    return random.choice(memes)
+def pick_meme(prefs: dict):
+    investor_type = (prefs.get("investor_type") or "").lower()
+    content = prefs.get("content_type") or []  # אמור להיות list (JSON)
+
+    content_set = set([str(x).lower() for x in (content if isinstance(content, list) else [content])])
+
+    MEMES_BY_INVESTOR = {
+        "hodler": [
+            {"title": "HODL mode", "url": "https://i.imgflip.com/1bij.jpg"},
+            {"title": "Diamond hands", "url": "https://i.imgflip.com/4/3si4.jpg"},
+        ],
+        "day_trader": [
+            {"title": "To the moon", "url": "https://i.imgflip.com/30b1gx.jpg"},
+            {"title": "1m candle PTSD", "url": "https://i.imgflip.com/1ur9b0.jpg"},
+        ],
+        "nft_collector": [
+            {"title": "JPEG investor", "url": "https://i.imgflip.com/2/1otk96.jpg"},
+            {"title": "Floor price vibes", "url": "https://i.imgflip.com/26am.jpg"},
+        ],
+    }
+
+    MEMES_BY_CONTENT = {
+        "fun": [
+            {"title": "Buy high sell low", "url": "https://i.imgflip.com/1ur9b0.jpg"},
+            {"title": "Crypto mood", "url": "https://i.imgflip.com/4/1g8my4.jpg"},
+        ],
+        "social": [
+            {"title": "Twitter experts", "url": "https://i.imgflip.com/4/2wifvo.jpg"},
+        ],
+        "market news": [
+            {"title": "Breaking news panic", "url": "https://i.imgflip.com/4/1bij.jpg"},
+        ],
+        "charts": [
+            {"title": "Staring at charts", "url": "https://i.imgflip.com/4/1e7ql7.jpg"},
+        ],
+    }
+
+    pool = []
+
+    if investor_type in MEMES_BY_INVESTOR:
+        pool += MEMES_BY_INVESTOR[investor_type]
+
+    for k, arr in MEMES_BY_CONTENT.items():
+        if k in content_set:
+            pool += arr
+
+    if not pool:
+        pool = [
+            {"title": "HODL mode", "url": "https://i.imgflip.com/1bij.jpg"},
+            {"title": "To the moon", "url": "https://i.imgflip.com/30b1gx.jpg"},
+            {"title": "Buy high sell low", "url": "https://i.imgflip.com/1ur9b0.jpg"},
+        ]
+
+    return random.choice(pool)
 
 def coingecko_base_url():
     mode = os.getenv("COINGECKO_MODE", "demo").lower()
@@ -254,7 +301,7 @@ async def dashboard(user_id: int = Depends(get_user_id)):
                     {"title": "ETH staking demand rises ahead of upgrade rumors", "published_at": "2026-01-26"},
                 ], "error": None},
                 "ai_insight": {"source": "mock", "data": "Keep risk controlled. Scale in slowly, avoid chasing candles.", "error": None},
-                "meme": {"title": "HODL mode", "url": "https://i.imgflip.com/1bij.jpg"},
+                "meme": pick_meme(prefs),
             },
         }
 
@@ -264,7 +311,7 @@ async def dashboard(user_id: int = Depends(get_user_id)):
     prices = {"source": "coingecko", "data": {}, "error": None}
     news = {"source": "cryptopanic", "data": [], "error": None}
     insight = {"source": "openrouter", "data": None, "error": None}
-    meme = pick_meme()
+    meme = pick_meme(prefs)
 
     ids = [COINGECKO_IDS.get(sym) for sym in assets]
     ids = [x for x in ids if x]
