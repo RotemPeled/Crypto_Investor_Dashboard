@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv()
 app = FastAPI()
 bearer = HTTPBearer()
+DEV_MODE = os.getenv("DEV_MODE", "false").lower() == "true"
 
 app.add_middleware(
     CORSMiddleware,
@@ -231,6 +232,20 @@ async def dashboard(user_id: int = Depends(get_user_id)):
 
     if prefs is None:
         raise HTTPException(400, "Onboarding not completed")
+
+    if DEV_MODE:
+        return {
+            "preferences": prefs,
+            "sections": {
+                "prices": {"source": "mock", "data": {"bitcoin": {"usd": 65000}, "ethereum": {"usd": 3200}}, "error": None},
+                "news": {"source": "mock", "data": [
+                    {"title": "Bitcoin holds steady as volatility drops", "published_at": "2026-01-26"},
+                    {"title": "ETH staking demand rises ahead of upgrade rumors", "published_at": "2026-01-26"},
+                ], "error": None},
+                "ai_insight": {"source": "mock", "data": "Keep risk controlled. Scale in slowly, avoid chasing candles.", "error": None},
+                "meme": {"title": "HODL mode", "url": "https://i.imgflip.com/1bij.jpg"},
+            },
+        }
 
     assets = [a.upper() for a in prefs["crypto_assets"]]
     investor_type = prefs["investor_type"]
