@@ -1,3 +1,4 @@
+// Dashboard.jsx (NEW FILE)
 import React, { useEffect, useState } from "react";
 import { getDashboard } from "../api/dashboard";
 import { saveVote } from "../api/votes";
@@ -5,6 +6,8 @@ import { useAuth } from "../auth/AuthProvider";
 import { useNavigate } from "react-router-dom";
 import Shell from "../ui/Shell";
 import { Button } from "../ui/Form";
+import { ThumbsUp, ThumbsDown } from "lucide-react";
+
 
 function Section({ title, subtitle, right, children }) {
   return (
@@ -12,8 +15,14 @@ function Section({ title, subtitle, right, children }) {
       <div className="cardInner">
         <div className="row" style={{ alignItems: "flex-start" }}>
           <div>
-            <div style={{ fontSize: 16, letterSpacing: "-0.01em" }}><b>{title}</b></div>
-            {subtitle ? <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 6 }}>{subtitle}</div> : null}
+            <div style={{ fontSize: 16, letterSpacing: "-0.01em" }}>
+              <b>{title}</b>
+            </div>
+            {subtitle ? (
+              <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 6 }}>
+                {subtitle}
+              </div>
+            ) : null}
           </div>
           {right ? <div>{right}</div> : null}
         </div>
@@ -24,14 +33,21 @@ function Section({ title, subtitle, right, children }) {
   );
 }
 
-function VoteBar({ onUp, onDown }) {
-  return (
-    <div className="row" style={{ justifyContent: "flex-start" }}>
-      <Button onClick={onUp}>👍</Button>
-      <Button onClick={onDown}>👎</Button>
-    </div>
-  );
-}
+
+/* --- VoteBar: compact + can be aligned by wrapper --- */
+function VoteBar({ onUp, onDown, className = "" }) {
+    return (
+      <div className={`voteBar ${className}`}>
+        <button className="voteBtn" onClick={onUp} aria-label="Like">
+          <ThumbsUp size={16} strokeWidth={1.6} />
+        </button>
+        <button className="voteBtn" onClick={onDown} aria-label="Dislike">
+          <ThumbsDown size={16} strokeWidth={1.6} />
+        </button>
+      </div>
+    );
+  }
+  
 
 export default function Dashboard() {
   const nav = useNavigate();
@@ -60,11 +76,27 @@ export default function Dashboard() {
     } catch {}
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+  }, []);
 
   if (err) {
     return (
-      <Shell title="Dashboard" subtitle="Something went wrong." right={<Button variant="danger" onClick={() => { logout(); nav("/login"); }}>Logout</Button>}>
+      <Shell
+        title="Dashboard"
+        subtitle="Something went wrong."
+        right={
+          <Button
+            variant="danger"
+            onClick={() => {
+              logout();
+              nav("/login");
+            }}
+          >
+            Logout
+          </Button>
+        }
+      >
         <div className="error">{err}</div>
         <div style={{ marginTop: 12 }}>
           <Button onClick={load}>Retry</Button>
@@ -89,12 +121,18 @@ export default function Dashboard() {
 
   return (
     <Shell
-      title="Today"
-      subtitle="Prices, news, AI insight, and a meme — tuned to your preferences."
+      title="Today Dashboard"
       right={
         <div className="row">
-          <Button onClick={load}>Refresh</Button>
-          <Button variant="danger" onClick={() => { logout(); nav("/login"); }}>Logout</Button>
+          <Button
+            variant="danger"
+            onClick={() => {
+              logout();
+              nav("/login");
+            }}
+          >
+            Logout
+          </Button>
         </div>
       }
     >
@@ -108,8 +146,11 @@ export default function Dashboard() {
             <pre style={{ margin: 0, color: "var(--muted)", overflowX: "auto" }}>
               {JSON.stringify(prices?.data, null, 2)}
             </pre>
-            <div style={{ marginTop: 12 }}>
+
+            {/* compact meta-action, aligned right */}
+            <div className="metaFooter">
               <VoteBar
+                className="voteBarRight"
                 onUp={() => vote("prices", "prices_block", 1)}
                 onDown={() => vote("prices", "prices_block", -1)}
               />
@@ -121,14 +162,17 @@ export default function Dashboard() {
             subtitle={ai?.error ? `Error: ${ai.error}` : "Short, investor-type oriented"}
             right={<span className="badge">{ai?.source || "openrouter"}</span>}
           >
-            <div style={{ color: "var(--text)", lineHeight: 1.7 }}>
-              {ai?.data}
-            </div>
-            <div style={{ marginTop: 12 }}>
-              <VoteBar
-                onUp={() => vote("ai_insight", "today_insight", 1)}
-                onDown={() => vote("ai_insight", "today_insight", -1)}
-              />
+            <div className="insightBody">
+              <div className="insightText">{ai?.data}</div>
+
+              {/* right-aligned, subtle */}
+              <div className="metaFooter">
+                <VoteBar
+                  className="voteBarRight"
+                  onUp={() => vote("ai_insight", "today_insight", 1)}
+                  onDown={() => vote("ai_insight", "today_insight", -1)}
+                />
+              </div>
             </div>
           </Section>
         </div>
@@ -140,13 +184,17 @@ export default function Dashboard() {
         >
           <div className="grid" style={{ gap: 12 }}>
             {(news?.data || []).map((n, idx) => (
-              <div key={idx} style={{ padding: 12, borderRadius: 16, border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.04)" }}>
-                <div style={{ fontSize: 14 }}><b>{n.title}</b></div>
-                <div style={{ color: "var(--muted-2)", fontSize: 12, marginTop: 6 }}>
+              <div key={idx} className="tile" style={{ padding: 12 }}>
+                <div style={{ fontSize: 14 }}>
+                  <b>{n.title}</b>
+                </div>
+                <div style={{ color: "var(--muted2)", fontSize: 12, marginTop: 6 }}>
                   {n.published_at || "—"}
                 </div>
-                <div style={{ marginTop: 10 }}>
+
+                <div className="metaFooter">
                   <VoteBar
+                    className="voteBarRight"
                     onUp={() => vote("news", n.title || String(idx), 1)}
                     onDown={() => vote("news", n.title || String(idx), -1)}
                   />
@@ -156,19 +204,17 @@ export default function Dashboard() {
           </div>
         </Section>
 
-        <Section
-          title="Meme"
-          subtitle="Because the market demands balance."
-          right={<span className="badge">fun</span>}
-        >
+        <Section title="Meme" subtitle="Because the market demands balance." right={<span className="badge">fun</span>}>
           <div className="row" style={{ alignItems: "flex-start" }}>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14 }}><b>{meme?.title}</b></div>
-              <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 8 }}>
-                Lightweight morale booster.
+              <div style={{ fontSize: 14 }}>
+                <b>{meme?.title}</b>
               </div>
-              <div style={{ marginTop: 12 }}>
+              <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 8 }}>Lightweight morale booster.</div>
+
+              <div className="metaFooter">
                 <VoteBar
+                  className="voteBarRight"
                   onUp={() => vote("meme", meme?.url || "meme", 1)}
                   onDown={() => vote("meme", meme?.url || "meme", -1)}
                 />
@@ -183,7 +229,7 @@ export default function Dashboard() {
                   width: 240,
                   maxWidth: "40vw",
                   borderRadius: 18,
-                  border: "1px solid rgba(255,255,255,0.10)",
+                  border: "1px solid var(--stroke)",
                   boxShadow: "var(--shadow2)",
                 }}
               />

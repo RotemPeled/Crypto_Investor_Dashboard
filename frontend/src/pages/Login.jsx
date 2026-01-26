@@ -28,10 +28,10 @@ export default function Login() {
   return (
     <Shell
       title="Welcome back"
-      subtitle="Sign in to your private dashboard. Token-based auth, clean flow."
-      right={<span className="badge">JWT • Bearer</span>}
+      center
+      width={560}
     >
-      <div className="grid" style={{ maxWidth: 480 }}>
+      <div className="loginWrap">
         <form onSubmit={onSubmit} className="grid" style={{ gap: 12 }}>
           <Field label="Email">
             <Input
@@ -52,12 +52,17 @@ export default function Login() {
 
           {err ? <div className="error">{err}</div> : null}
 
-          <div className="row">
-            <span className="badge">
-              No account? <Link to="/signup">Create one</Link>
-            </span>
-            <Button variant="primary" type="submit">Enter</Button>
+          <div className="formActions">
+          <div className="formActionsLeft">
+            Don't have an account? <Link to="/signup">Sign up</Link>
+            </div>
+
+            <div className="formActionsRight">
+            <Button variant="primary" type="submit">Login</Button>
+            </div>
+
           </div>
+
         </form>
       </div>
     </Shell>

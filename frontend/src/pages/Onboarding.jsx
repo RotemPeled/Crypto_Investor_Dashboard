@@ -4,26 +4,19 @@ import { ENDPOINTS } from "../api/endpoints";
 import { useNavigate } from "react-router-dom";
 import Shell from "../ui/Shell";
 import { Button } from "../ui/Form";
-
 function Pill({ active, onClick, children }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="btn"
-      style={{
-        borderRadius: 999,
-        background: active ? "rgba(255,255,255,0.22)" : undefined,
-        borderColor: active ? "rgba(255,255,255,0.35)" : undefined,
-        boxShadow: active ? "0 8px 20px rgba(0,0,0,0.35)" : undefined,
-        opacity: 1
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className={`pill ${active ? "pillActive" : ""}`}
+      >
+        {active ? <span className="pillCheck">✓</span> : null}
+        {children}
+      </button>
+    );
+  }
+  
 export default function Onboarding() {
   const nav = useNavigate();
   const [err, setErr] = useState("");
@@ -58,8 +51,7 @@ export default function Onboarding() {
   return (
     <Shell
       title="Personalize your feed"
-      subtitle="Choose assets, style, and the content you want. You can refine later."
-      right={<span className="badge">Preferences</span>}
+      subtitle="Choose assets, style, and the content you want."
     >
       <form onSubmit={onSubmit} className="grid" style={{ gap: 18 }}>
         <div className="card" style={{ background: "transparent" }}>
@@ -103,10 +95,13 @@ export default function Onboarding() {
 
         {err ? <div className="error">{err}</div> : null}
 
-        <div className="row">
-          <span className="badge">This will unlock your dashboard</span>
-          <Button variant="primary" type="submit">Save</Button>
+        <div className="formActions">
+
+        <div className="formActionsRight">
+            <Button variant="primary" type="submit">Save</Button>
         </div>
+        </div>
+
       </form>
     </Shell>
   );

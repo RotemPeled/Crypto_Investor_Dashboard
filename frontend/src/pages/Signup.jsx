@@ -30,8 +30,8 @@ export default function Signup() {
   return (
     <Shell
       title="Create account"
-      subtitle="Clean onboarding, personalized dashboard, and simple feedback to improve your feed."
-      right={<span className="badge">FastAPI • React</span>}
+      center
+      width={560}
     >
       <div className="grid" style={{ maxWidth: 520 }}>
         <form onSubmit={onSubmit} className="grid" style={{ gap: 12 }}>
@@ -63,12 +63,16 @@ export default function Signup() {
 
           {err ? <div className="error">{err}</div> : null}
 
-          <div className="row">
-            <span className="badge">
-              Already have an account? <Link to="/login">Login</Link>
-            </span>
-            <Button variant="primary" type="submit">Create</Button>
+          <div className="formActions">
+            <div className="formActionsLeft">
+                Already have an account? <Link to="/login">Login</Link>
+            </div>
+
+            <div className="formActionsRight">
+                <Button variant="primary" type="submit">Create</Button>
+            </div>
           </div>
+
         </form>
       </div>
     </Shell>
