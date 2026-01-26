@@ -1,0 +1,7 @@
+import { api } from "./client";
+import { ENDPOINTS } from "./endpoints";
+
+export async function saveVote({ section, item, value }) {
+  const res = await api.post(ENDPOINTS.votes, { section, item, value });
+  return res.data; // { message: "vote saved" }
+}

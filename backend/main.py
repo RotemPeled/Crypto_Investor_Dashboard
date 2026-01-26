@@ -11,11 +11,19 @@ from db import engine
 import json
 import random
 import httpx
+from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 app = FastAPI()
-
 bearer = HTTPBearer()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class SignupReq(BaseModel):
     name: str
