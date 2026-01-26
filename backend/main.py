@@ -7,7 +7,6 @@ from sqlalchemy import text
 import bcrypt
 from dotenv import load_dotenv
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from db import engine
 import json
 import random
 import httpx
@@ -15,6 +14,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 app = FastAPI()
+
+from db import init_db, engine
+@app.on_event("startup")
+def on_startup():
+    init_db()
+    
 bearer = HTTPBearer()
 DEV_MODE = os.getenv("DEV_MODE", "false").lower() == "true"
 
@@ -108,6 +113,7 @@ def coingecko_base_url():
     mode = os.getenv("COINGECKO_MODE", "demo").lower()
     return "https://pro-api.coingecko.com/api/v3" if mode == "pro" else "https://api.coingecko.com/api/v3"
 
+    
 # saving new user in DB
 @app.post("/auth/signup")
 def signup(data: SignupReq):
@@ -205,22 +211,27 @@ def me(user_id: int = Depends(get_user_id)):
 # save onboarding data
 @app.post("/onboarding")
 def save_onboarding(data: OnboardingReq, user_id: int = Depends(get_user_id)):
-    assets_json = json.dumps(data.crypto_assets)
-    content_json = json.dumps(data.content_type)
-
     q = text("""
         INSERT INTO user_preferences (user_id, crypto_assets, investor_type, content_type)
-        VALUES (:user_id, :crypto_assets, :investor_type, :content_type)
+        VALUES (:user_id, CAST(:crypto_assets AS jsonb), :investor_type, CAST(:content_type AS jsonb))
     """)
 
-    with engine.connect() as conn:
-        conn.execute(q, {
-            "user_id": user_id,
-            "crypto_assets": assets_json,
-            "investor_type": data.investor_type,
-            "content_type": content_json
-        })
-        conn.commit()
+    try:
+        with engine.connect() as conn:
+            conn.execute(q, {
+                "user_id": user_id,
+                "crypto_assets": json.dumps(data.crypto_assets),
+                "investor_type": data.investor_type,
+                "content_type": json.dumps(data.content_type)
+            })
+            conn.commit()
+
+    except Exception:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=409,
+            detail="Onboarding already completed"
+        )
 
     return {"message": "onboarding saved"}
 
