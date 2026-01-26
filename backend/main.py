@@ -9,16 +9,13 @@ from dotenv import load_dotenv
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from db import engine
 import json
-
+import random
+import httpx
 
 load_dotenv()
 app = FastAPI()
 
 bearer = HTTPBearer()
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
 
 class SignupReq(BaseModel):
     name: str
@@ -33,6 +30,11 @@ class OnboardingReq(BaseModel):
     crypto_assets: list[str]
     investor_type: str
     content_type: list[str]
+
+class VoteReq(BaseModel):
+    section: str  
+    item: str 
+    value: int      
 
 
 def get_user_id(creds: HTTPAuthorizationCredentials = Depends(bearer)):
@@ -51,7 +53,51 @@ def get_user_id(creds: HTTPAuthorizationCredentials = Depends(bearer)):
     except Exception:
         raise HTTPException(401, "Invalid token")
 
+COINGECKO_IDS = {
+    "BTC": "bitcoin",
+    "ETH": "ethereum",
+    "SOL": "solana",
+    "XRP": "ripple",
+    "ADA": "cardano",
+    "DOGE": "dogecoin",
+}
 
+def load_user_preferences(conn, user_id: int):
+    q = text("""
+        SELECT crypto_assets, investor_type, content_type
+        FROM user_preferences
+        WHERE user_id = :id
+        LIMIT 1
+    """)
+    row = conn.execute(q, {"id": user_id}).fetchone()
+    if row is None:
+        return None
+
+    assets = row.crypto_assets
+    content = row.content_type
+
+    if isinstance(assets, str):
+        assets = json.loads(assets)
+    if isinstance(content, str):
+        content = json.loads(content)
+
+    return {
+        "crypto_assets": assets,
+        "investor_type": row.investor_type,
+        "content_type": content,
+    }
+
+def pick_meme():
+    memes = [
+        {"title": "HODL mode", "url": "https://i.imgflip.com/1bij.jpg"},
+        {"title": "To the moon", "url": "https://i.imgflip.com/30b1gx.jpg"},
+        {"title": "Buy high sell low", "url": "https://i.imgflip.com/1ur9b0.jpg"},
+    ]
+    return random.choice(memes)
+
+def coingecko_base_url():
+    mode = os.getenv("COINGECKO_MODE", "demo").lower()
+    return "https://pro-api.coingecko.com/api/v3" if mode == "pro" else "https://api.coingecko.com/api/v3"
 
 # saving new user in DB
 @app.post("/auth/signup")
@@ -116,7 +162,7 @@ def me(user_id: int = Depends(get_user_id)):
 
     return {"id": user.id, "name": user.name, "email": user.email, "needsOnboarding": (not has_pref)}
 
-
+# save onboarding data
 @app.post("/onboarding")
 def save_onboarding(data: OnboardingReq, user_id: int = Depends(get_user_id)):
     assets_json = json.dumps(data.crypto_assets)
@@ -134,12 +180,133 @@ def save_onboarding(data: OnboardingReq, user_id: int = Depends(get_user_id)):
             "investor_type": data.investor_type,
             "content_type": content_json
         })
-
         conn.commit()
 
     return {"message": "onboarding saved"}
 
+@app.get("/dashboard")
+async def dashboard(user_id: int = Depends(get_user_id)):
+    # load user preferences 
+    with engine.connect() as conn:
+        prefs = load_user_preferences(conn, user_id)
 
-# @app.get("/onboarding")
+    if prefs is None:
+        raise HTTPException(400, "Onboarding not completed")
 
-# @app.post("/votes")
+    assets = [a.upper() for a in prefs["crypto_assets"]]
+    investor_type = prefs["investor_type"]
+
+    prices = {"source": "coingecko", "data": {}, "error": None}
+    news = {"source": "cryptopanic", "data": [], "error": None}
+    insight = {"source": "openrouter", "data": None, "error": None}
+    meme = pick_meme()
+
+    ids = [COINGECKO_IDS.get(sym) for sym in assets]
+    ids = [x for x in ids if x]
+    if not ids:
+        prices["error"] = "No supported assets (add mapping in COINGECKO_IDS)"
+
+    cryptopanic_token = os.getenv("CRYPTOPANIC_TOKEN")
+    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+
+    async with httpx.AsyncClient(timeout=12) as client:
+        # --- COINGECKO ---
+        if ids:
+            try:
+                base = coingecko_base_url()
+                params = {"ids": ",".join(ids), "vs_currencies": "usd"}
+                cg_key = os.getenv("COINGECKO_API_KEY")
+                headers = {"x-cg-pro-api-key": cg_key} if cg_key else {}
+
+                r = await client.get(f"{base}/simple/price", params=params, headers=headers)
+                if r.status_code == 200:
+                    prices["data"] = r.json()
+                else:
+                    prices["error"] = f"CoinGecko status {r.status_code}"
+            except Exception as e:
+                prices["error"] = str(e)
+
+        # --- CRYPTOPANIC ---
+        if not cryptopanic_token:
+            news["error"] = "CRYPTOPANIC_TOKEN missing (showing fallback)"
+            news["data"] = [{"title": "No CryptoPanic token configured", "published_at": None}]
+        else:
+            try:
+                rn = await client.get(
+                    "https://cryptopanic.com/api/developer/v2/posts/",
+                    params={"auth_token": cryptopanic_token, "public": "true"},
+                )
+                if rn.status_code == 200:
+                    data = rn.json().get("results") or []
+                    news["data"] = [
+                        {"title": item.get("title"), "published_at": item.get("published_at")}
+                        for item in data[:10]
+                    ]
+                else:
+                    news["error"] = f"CryptoPanic status {rn.status_code}"
+            except Exception as e:
+                news["error"] = str(e)
+
+        # --- OPENROUTER ---
+        if not openrouter_key:
+            insight["error"] = "OPENROUTER_API_KEY missing (showing fallback)"
+            insight["data"] = "No AI key configured yet."
+        else:
+            try:
+                prompt = (
+                    f"Give ONE short crypto insight for a {investor_type}. "
+                    f"Assets: {assets}. Keep under 40 words."
+                )
+                ai = await client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {openrouter_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "openai/gpt-3.5-turbo",
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                )
+                if ai.status_code == 200:
+                    j = ai.json()
+                    insight["data"] = j["choices"][0]["message"]["content"]
+                else:
+                    insight["error"] = f"OpenRouter status {ai.status_code}"
+                    insight["data"] = "AI key configured but request failed."
+            except Exception as e:
+                insight["error"] = str(e)
+                insight["data"] = "AI request failed."
+
+    return {
+        "preferences": prefs,
+        "sections": {
+            "prices": prices,
+            "news": news,
+            "ai_insight": insight,
+            "meme": meme,
+        },
+    }
+
+@app.post("/votes")
+def vote(data: VoteReq, user_id: int = Depends(get_user_id)):
+    if data.value not in (1, -1):
+        raise HTTPException(400, "value must be 1 or -1")
+
+    q = text("""
+        INSERT INTO user_votes (user_id, section, item, value)
+        VALUES (:user_id, :section, :item, :value)
+        ON CONFLICT (user_id, section, item)
+        DO UPDATE SET value = EXCLUDED.value, created_at = now()
+    """)
+
+    with engine.connect() as conn:
+        conn.execute(q, {
+            "user_id": user_id,
+            "section": data.section,
+            "item": data.item,
+            "value": data.value
+        })
+        conn.commit()
+
+    return {"message": "vote saved"}
