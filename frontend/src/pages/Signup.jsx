@@ -1,40 +1,76 @@
 import React, { useState } from "react";
 import { signup } from "../api/auth";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
+import { useAuth } from "../auth/AuthProvider";
+import Shell from "../ui/Shell";
+import { Field, Input, Button } from "../ui/Form";
 
 export default function Signup() {
   const nav = useNavigate();
+  const { setSession } = useAuth();
+
   const [form, setForm] = useState({ name: "", email: "", password: "" });
   const [err, setErr] = useState("");
 
   async function onSubmit(e) {
     e.preventDefault();
     setErr("");
+
     try {
-      await signup(form);
-      nav("/login");
+      const res = await signup(form); // עכשיו השרת מחזיר access_token
+      if (!res?.access_token) throw new Error("Signup did not return access_token");
+
+      setSession(res.access_token);      // שומר token ב-localStorage
+      nav("/onboarding");                // עובר ישר ל-onboarding
     } catch (e2) {
-      setErr(e2?.response?.data?.detail || "Signup failed");
+      setErr(e2?.response?.data?.detail || e2.message || "Signup failed");
     }
   }
 
   return (
-    <div style={{ padding: 24 }}>
-      <h2>Signup</h2>
+    <Shell
+      title="Create account"
+      subtitle="Clean onboarding, personalized dashboard, and simple feedback to improve your feed."
+      right={<span className="badge">FastAPI • React</span>}
+    >
+      <div className="grid" style={{ maxWidth: 520 }}>
+        <form onSubmit={onSubmit} className="grid" style={{ gap: 12 }}>
+          <div className="grid2">
+            <Field label="Name">
+              <Input
+                placeholder="Your name"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+              />
+            </Field>
+            <Field label="Email">
+              <Input
+                placeholder="name@email.com"
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+              />
+            </Field>
+          </div>
 
-      <form onSubmit={onSubmit} style={{ display: "grid", gap: 8, maxWidth: 340 }}>
-        <input placeholder="name" value={form.name}
-          onChange={(e) => setForm({ ...form, name: e.target.value })} />
-        <input placeholder="email" value={form.email}
-          onChange={(e) => setForm({ ...form, email: e.target.value })} />
-        <input placeholder="password" type="password" value={form.password}
-          onChange={(e) => setForm({ ...form, password: e.target.value })} />
+          <Field label="Password">
+            <Input
+              placeholder="••••••••"
+              type="password"
+              value={form.password}
+              onChange={(e) => setForm({ ...form, password: e.target.value })}
+            />
+          </Field>
 
-        <button type="submit">Create account</button>
-      </form>
+          {err ? <div className="error">{err}</div> : null}
 
-      {err && <p style={{ color: "red" }}>{err}</p>}
-      <p><Link to="/login">Already have an account? Login</Link></p>
-    </div>
+          <div className="row">
+            <span className="badge">
+              Already have an account? <Link to="/login">Login</Link>
+            </span>
+            <Button variant="primary" type="submit">Create</Button>
+          </div>
+        </form>
+      </div>
+    </Shell>
   );
 }

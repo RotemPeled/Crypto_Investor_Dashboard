@@ -3,11 +3,39 @@ import { getDashboard } from "../api/dashboard";
 import { saveVote } from "../api/votes";
 import { useAuth } from "../auth/AuthProvider";
 import { useNavigate } from "react-router-dom";
+import Shell from "../ui/Shell";
+import { Button } from "../ui/Form";
+
+function Section({ title, subtitle, right, children }) {
+  return (
+    <div className="card" style={{ background: "transparent" }}>
+      <div className="cardInner">
+        <div className="row" style={{ alignItems: "flex-start" }}>
+          <div>
+            <div style={{ fontSize: 16, letterSpacing: "-0.01em" }}><b>{title}</b></div>
+            {subtitle ? <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 6 }}>{subtitle}</div> : null}
+          </div>
+          {right ? <div>{right}</div> : null}
+        </div>
+        <hr className="hr" />
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function VoteBar({ onUp, onDown }) {
+  return (
+    <div className="row" style={{ justifyContent: "flex-start" }}>
+      <Button onClick={onUp}>👍</Button>
+      <Button onClick={onDown}>👎</Button>
+    </div>
+  );
+}
 
 export default function Dashboard() {
   const nav = useNavigate();
   const { logout } = useAuth();
-
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
 
@@ -26,74 +54,143 @@ export default function Dashboard() {
     }
   }
 
-  useEffect(() => { load(); }, []);
-
   async function vote(section, item, value) {
     try {
-      await saveVote({ section, item, value }); // item חייב להיות string אצלך
-      alert("vote saved");
-    } catch {
-      alert("vote failed");
-    }
+      await saveVote({ section, item, value });
+    } catch {}
   }
 
-  if (err) return <div style={{ padding: 24, color: "red" }}>{err}</div>;
-  if (!data) return <div style={{ padding: 24 }}>Loading...</div>;
+  useEffect(() => { load(); }, []);
 
-  const sections = data.sections || {};
-  const prices = sections.prices;
-  const news = sections.news;
-  const ai = sections.ai_insight;
-  const meme = sections.meme;
+  if (err) {
+    return (
+      <Shell title="Dashboard" subtitle="Something went wrong." right={<Button variant="danger" onClick={() => { logout(); nav("/login"); }}>Logout</Button>}>
+        <div className="error">{err}</div>
+        <div style={{ marginTop: 12 }}>
+          <Button onClick={load}>Retry</Button>
+        </div>
+      </Shell>
+    );
+  }
+
+  if (!data) {
+    return (
+      <Shell title="Dashboard" subtitle="Loading your sections…" right={<span className="badge">Today</span>}>
+        <div className="badge">Fetching data…</div>
+      </Shell>
+    );
+  }
+
+  const s = data.sections || {};
+  const prices = s.prices;
+  const news = s.news;
+  const ai = s.ai_insight;
+  const meme = s.meme;
 
   return (
-    <div style={{ padding: 24, display: "grid", gap: 18 }}>
-      <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <h2>Dashboard</h2>
-        <button onClick={() => { logout(); nav("/login"); }}>Logout</button>
-      </div>
-
-      <section style={{ border: "1px solid #ddd", padding: 12 }}>
-        <h3>Prices (CoinGecko)</h3>
-        {prices?.error && <p style={{ color: "red" }}>{prices.error}</p>}
-        <pre>{JSON.stringify(prices?.data, null, 2)}</pre>
-        <button onClick={() => vote("prices", "prices_block", 1)}>👍</button>
-        <button onClick={() => vote("prices", "prices_block", -1)}>👎</button>
-      </section>
-
-      <section style={{ border: "1px solid #ddd", padding: 12 }}>
-        <h3>News (CryptoPanic)</h3>
-        {news?.error && <p style={{ color: "red" }}>{news.error}</p>}
-        {(news?.data || []).map((n, idx) => (
-          <div key={idx} style={{ marginBottom: 10 }}>
-            <div><b>{n.title}</b></div>
-            <div>{n.published_at || ""}</div>
-            {/* item אצלך הוא string → נשתמש בכותרת (או idx) */}
-            <button onClick={() => vote("news", n.title || String(idx), 1)}>👍</button>
-            <button onClick={() => vote("news", n.title || String(idx), -1)}>👎</button>
-          </div>
-        ))}
-      </section>
-
-      <section style={{ border: "1px solid #ddd", padding: 12 }}>
-        <h3>AI Insight</h3>
-        {ai?.error && <p style={{ color: "red" }}>{ai.error}</p>}
-        <p>{ai?.data}</p>
-        <button onClick={() => vote("ai_insight", "today_insight", 1)}>👍</button>
-        <button onClick={() => vote("ai_insight", "today_insight", -1)}>👎</button>
-      </section>
-
-      <section style={{ border: "1px solid #ddd", padding: 12 }}>
-        <h3>Meme</h3>
-        <div><b>{meme?.title}</b></div>
-        {meme?.url && <img src={meme.url} alt="meme" style={{ maxWidth: 320 }} />}
-        <div style={{ marginTop: 8 }}>
-          <button onClick={() => vote("meme", meme?.url || "meme", 1)}>👍</button>
-          <button onClick={() => vote("meme", meme?.url || "meme", -1)}>👎</button>
+    <Shell
+      title="Today"
+      subtitle="Prices, news, AI insight, and a meme — tuned to your preferences."
+      right={
+        <div className="row">
+          <Button onClick={load}>Refresh</Button>
+          <Button variant="danger" onClick={() => { logout(); nav("/login"); }}>Logout</Button>
         </div>
-      </section>
+      }
+    >
+      <div className="grid" style={{ gap: 14 }}>
+        <div className="grid2">
+          <Section
+            title="Prices"
+            subtitle={prices?.error ? `Error: ${prices.error}` : "CoinGecko snapshot (USD)"}
+            right={<span className="badge">{prices?.source || "coingecko"}</span>}
+          >
+            <pre style={{ margin: 0, color: "var(--muted)", overflowX: "auto" }}>
+              {JSON.stringify(prices?.data, null, 2)}
+            </pre>
+            <div style={{ marginTop: 12 }}>
+              <VoteBar
+                onUp={() => vote("prices", "prices_block", 1)}
+                onDown={() => vote("prices", "prices_block", -1)}
+              />
+            </div>
+          </Section>
 
-      <button onClick={load}>Reload</button>
-    </div>
+          <Section
+            title="AI Insight"
+            subtitle={ai?.error ? `Error: ${ai.error}` : "Short, investor-type oriented"}
+            right={<span className="badge">{ai?.source || "openrouter"}</span>}
+          >
+            <div style={{ color: "var(--text)", lineHeight: 1.7 }}>
+              {ai?.data}
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <VoteBar
+                onUp={() => vote("ai_insight", "today_insight", 1)}
+                onDown={() => vote("ai_insight", "today_insight", -1)}
+              />
+            </div>
+          </Section>
+        </div>
+
+        <Section
+          title="News"
+          subtitle={news?.error ? `Error: ${news.error}` : "Latest headlines"}
+          right={<span className="badge">{news?.source || "cryptopanic"}</span>}
+        >
+          <div className="grid" style={{ gap: 12 }}>
+            {(news?.data || []).map((n, idx) => (
+              <div key={idx} style={{ padding: 12, borderRadius: 16, border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.04)" }}>
+                <div style={{ fontSize: 14 }}><b>{n.title}</b></div>
+                <div style={{ color: "var(--muted-2)", fontSize: 12, marginTop: 6 }}>
+                  {n.published_at || "—"}
+                </div>
+                <div style={{ marginTop: 10 }}>
+                  <VoteBar
+                    onUp={() => vote("news", n.title || String(idx), 1)}
+                    onDown={() => vote("news", n.title || String(idx), -1)}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </Section>
+
+        <Section
+          title="Meme"
+          subtitle="Because the market demands balance."
+          right={<span className="badge">fun</span>}
+        >
+          <div className="row" style={{ alignItems: "flex-start" }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14 }}><b>{meme?.title}</b></div>
+              <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 8 }}>
+                Lightweight morale booster.
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <VoteBar
+                  onUp={() => vote("meme", meme?.url || "meme", 1)}
+                  onDown={() => vote("meme", meme?.url || "meme", -1)}
+                />
+              </div>
+            </div>
+
+            {meme?.url ? (
+              <img
+                src={meme.url}
+                alt="meme"
+                style={{
+                  width: 240,
+                  maxWidth: "40vw",
+                  borderRadius: 18,
+                  border: "1px solid rgba(255,255,255,0.10)",
+                  boxShadow: "var(--shadow2)",
+                }}
+              />
+            ) : null}
+          </div>
+        </Section>
+      </div>
+    </Shell>
   );
 }

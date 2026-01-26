@@ -110,21 +110,52 @@ def coingecko_base_url():
 # saving new user in DB
 @app.post("/auth/signup")
 def signup(data: SignupReq):
+    # hash password
     hashed_password = bcrypt.hashpw(
         data.password.encode("utf-8"),
         bcrypt.gensalt()
     ).decode("utf-8")
-    query = text("INSERT INTO users (name, email, password_hash) VALUES (:name, :email, :password_hash) RETURNING id")
-    
+
+    query = text("""
+        INSERT INTO users (name, email, password_hash)
+        VALUES (:name, :email, :password_hash)
+        RETURNING id
+    """)
+
     with engine.connect() as conn:
         try:
-            result = conn.execute(query, {"name": data.name, "password_hash": hashed_password, "email": data.email})
+            result = conn.execute(
+                query,
+                {
+                    "name": data.name,
+                    "email": data.email,
+                    "password_hash": hashed_password,
+                }
+            )
             conn.commit()
             user_id = result.scalar()
         except Exception:
             raise HTTPException(400, "User already exists")
 
-    return {"message": "user has been created successfully", "user_id": user_id}
+    # generate JWT (זהה ל-login)
+    secret = os.getenv("JWT_SECRET")
+    if not secret:
+        raise HTTPException(500, "JWT_SECRET is not set")
+
+    alg = os.getenv("JWT_ALGORITHM", "HS256")
+    payload = {
+        "sub": str(user_id),
+        "exp": datetime.utcnow() + timedelta(hours=1),
+    }
+    token = jwt.encode(payload, secret, algorithm=alg)
+
+    return {
+        "message": "user has been created successfully",
+        "user_id": user_id,
+        "access_token": token,
+        "token_type": "bearer",
+        "needsOnboarding": True
+    }
 
 # authenticate user
 @app.post("/auth/login")

@@ -2,19 +2,42 @@ import React, { useState } from "react";
 import { api } from "../api/client";
 import { ENDPOINTS } from "../api/endpoints";
 import { useNavigate } from "react-router-dom";
+import Shell from "../ui/Shell";
+import { Button } from "../ui/Form";
+
+function Pill({ active, onClick, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="btn"
+      style={{
+        borderRadius: 999,
+        background: active ? "rgba(255,255,255,0.22)" : undefined,
+        borderColor: active ? "rgba(255,255,255,0.35)" : undefined,
+        boxShadow: active ? "0 8px 20px rgba(0,0,0,0.35)" : undefined,
+        opacity: 1
+      }}
+    >
+      {children}
+    </button>
+  );
+}
 
 export default function Onboarding() {
   const nav = useNavigate();
   const [err, setErr] = useState("");
 
-  // תואם בדיוק ל-OnboardingReq שלך:
-  // crypto_assets: list[str], investor_type: str, content_type: list[str]
   const [cryptoAssets, setCryptoAssets] = useState(["BTC", "ETH"]);
   const [investorType, setInvestorType] = useState("long_term");
   const [contentType, setContentType] = useState(["news", "prices", "ai_insight", "meme"]);
 
-  function toggleFromArray(arr, value) {
-    return arr.includes(value) ? arr.filter((x) => x !== value) : [...arr, value];
+  const ASSETS = ["BTC","ETH","SOL","XRP","ADA","DOGE"];
+  const TYPES = ["long_term","short_term","day_trader"];
+  const CONTENT = ["news","prices","ai_insight","meme"];
+
+  function toggle(arr, v) {
+    return arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v];
   }
 
   async function onSubmit(e) {
@@ -33,51 +56,58 @@ export default function Onboarding() {
   }
 
   return (
-    <div style={{ padding: 24 }}>
-      <h2>Onboarding</h2>
-
-      <form onSubmit={onSubmit} style={{ display: "grid", gap: 16, maxWidth: 520 }}>
-        <div>
-          <div><b>Crypto assets</b></div>
-          {["BTC","ETH","SOL","XRP","ADA","DOGE"].map((a) => (
-            <label key={a} style={{ marginRight: 12 }}>
-              <input
-                type="checkbox"
-                checked={cryptoAssets.includes(a)}
-                onChange={() => setCryptoAssets((prev) => toggleFromArray(prev, a))}
-              />
-              {a}
-            </label>
-          ))}
+    <Shell
+      title="Personalize your feed"
+      subtitle="Choose assets, style, and the content you want. You can refine later."
+      right={<span className="badge">Preferences</span>}
+    >
+      <form onSubmit={onSubmit} className="grid" style={{ gap: 18 }}>
+        <div className="card" style={{ background: "transparent" }}>
+          <div className="cardInner">
+            <div className="label">Crypto assets</div>
+            <div className="row" style={{ flexWrap: "wrap", justifyContent: "flex-start" }}>
+              {ASSETS.map(a => (
+                <Pill key={a} active={cryptoAssets.includes(a)} onClick={() => setCryptoAssets(p => toggle(p, a))}>
+                  {a}
+                </Pill>
+              ))}
+            </div>
+          </div>
         </div>
 
-        <div>
-          <div><b>Investor type</b></div>
-          <select value={investorType} onChange={(e) => setInvestorType(e.target.value)}>
-            <option value="long_term">long_term</option>
-            <option value="short_term">short_term</option>
-            <option value="day_trader">day_trader</option>
-          </select>
+        <div className="card" style={{ background: "transparent" }}>
+          <div className="cardInner">
+            <div className="label">Investor type</div>
+            <div className="row" style={{ flexWrap: "wrap", justifyContent: "flex-start" }}>
+              {TYPES.map(t => (
+                <Pill key={t} active={investorType === t} onClick={() => setInvestorType(t)}>
+                  {t}
+                </Pill>
+              ))}
+            </div>
+          </div>
         </div>
 
-        <div>
-          <div><b>Content type</b></div>
-          {["news", "prices", "ai_insight", "meme"].map((c) => (
-            <label key={c} style={{ marginRight: 12 }}>
-              <input
-                type="checkbox"
-                checked={contentType.includes(c)}
-                onChange={() => setContentType((prev) => toggleFromArray(prev, c))}
-              />
-              {c}
-            </label>
-          ))}
+        <div className="card" style={{ background: "transparent" }}>
+          <div className="cardInner">
+            <div className="label">Content</div>
+            <div className="row" style={{ flexWrap: "wrap", justifyContent: "flex-start" }}>
+              {CONTENT.map(c => (
+                <Pill key={c} active={contentType.includes(c)} onClick={() => setContentType(p => toggle(p, c))}>
+                  {c}
+                </Pill>
+              ))}
+            </div>
+          </div>
         </div>
 
-        <button type="submit">Save</button>
+        {err ? <div className="error">{err}</div> : null}
+
+        <div className="row">
+          <span className="badge">This will unlock your dashboard</span>
+          <Button variant="primary" type="submit">Save</Button>
+        </div>
       </form>
-
-      {err && <p style={{ color: "red" }}>{err}</p>}
-    </div>
+    </Shell>
   );
 }

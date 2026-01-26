@@ -3,6 +3,8 @@ import { login } from "../api/auth";
 import { getMe } from "../api/me";
 import { useAuth } from "../auth/AuthProvider";
 import { Link, useNavigate } from "react-router-dom";
+import Shell from "../ui/Shell";
+import { Field, Input, Button } from "../ui/Form";
 
 export default function Login() {
   const nav = useNavigate();
@@ -14,10 +16,8 @@ export default function Login() {
     e.preventDefault();
     setErr("");
     try {
-      const data = await login(form); // { access_token, token_type }
+      const data = await login(form);
       setSession(data.access_token);
-
-      // חשוב: השרת שלך מחזיר needsOnboarding מ-/me
       const me = await getMe();
       nav(me.needsOnboarding ? "/onboarding" : "/dashboard");
     } catch (e2) {
@@ -26,19 +26,40 @@ export default function Login() {
   }
 
   return (
-    <div style={{ padding: 24 }}>
-      <h2>Login</h2>
+    <Shell
+      title="Welcome back"
+      subtitle="Sign in to your private dashboard. Token-based auth, clean flow."
+      right={<span className="badge">JWT • Bearer</span>}
+    >
+      <div className="grid" style={{ maxWidth: 480 }}>
+        <form onSubmit={onSubmit} className="grid" style={{ gap: 12 }}>
+          <Field label="Email">
+            <Input
+              placeholder="name@email.com"
+              value={form.email}
+              onChange={(e) => setForm({ ...form, email: e.target.value })}
+            />
+          </Field>
 
-      <form onSubmit={onSubmit} style={{ display: "grid", gap: 8, maxWidth: 340 }}>
-        <input placeholder="email" value={form.email}
-          onChange={(e) => setForm({ ...form, email: e.target.value })} />
-        <input placeholder="password" type="password" value={form.password}
-          onChange={(e) => setForm({ ...form, password: e.target.value })} />
-        <button type="submit">Enter</button>
-      </form>
+          <Field label="Password">
+            <Input
+              placeholder="••••••••"
+              type="password"
+              value={form.password}
+              onChange={(e) => setForm({ ...form, password: e.target.value })}
+            />
+          </Field>
 
-      {err && <p style={{ color: "red" }}>{err}</p>}
-      <p><Link to="/signup">No account? Signup</Link></p>
-    </div>
+          {err ? <div className="error">{err}</div> : null}
+
+          <div className="row">
+            <span className="badge">
+              No account? <Link to="/signup">Create one</Link>
+            </span>
+            <Button variant="primary" type="submit">Enter</Button>
+          </div>
+        </form>
+      </div>
+    </Shell>
   );
 }
