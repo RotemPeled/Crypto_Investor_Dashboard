@@ -1,41 +1,59 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { api } from "../api/client";
 import { ENDPOINTS } from "../api/endpoints";
 import { useNavigate } from "react-router-dom";
 import Shell from "../ui/Shell";
 import { Button } from "../ui/Form";
+
 function Pill({ active, onClick, children }) {
-    return (
-      <button
-        type="button"
-        onClick={onClick}
-        className={`pill ${active ? "pillActive" : ""}`}
-      >
-        {active ? <span className="pillCheck">✓</span> : null}
-        {children}
-      </button>
-    );
-  }
-  
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`pill ${active ? "pillActive" : ""}`}
+    >
+      {active ? <span className="pillCheck">✓</span> : null}
+      {children}
+    </button>
+  );
+}
+
 export default function Onboarding() {
   const nav = useNavigate();
   const [err, setErr] = useState("");
 
-  const [cryptoAssets, setCryptoAssets] = useState(["BTC", "ETH"]);
-  const [investorType, setInvestorType] = useState("long_term");
-  const [contentType, setContentType] = useState(["news", "prices", "ai_insight", "meme"]);
+  // ✅ Defaults: nothing selected
+  const [cryptoAssets, setCryptoAssets] = useState([]);
+  const [investorType, setInvestorType] = useState("");
+  const [contentType, setContentType] = useState([]);
 
-  const ASSETS = ["BTC","ETH","SOL","XRP","ADA","DOGE"];
-  const TYPES = ["long_term","short_term","day_trader"];
-  const CONTENT = ["news","prices","ai_insight","meme"];
+  const ASSETS = ["BTC", "ETH", "SOL", "XRP", "ADA", "DOGE"];
+  const TYPES = ["long_term", "short_term", "day_trader"];
+  const CONTENT = ["news", "prices", "ai_insight", "meme"];
 
   function toggle(arr, v) {
-    return arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v];
+    return arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v];
   }
+
+  const isValid = useMemo(() => {
+    return cryptoAssets.length > 0  && investorType && contentType.length > 0;
+  }, [cryptoAssets, contentType]);
 
   async function onSubmit(e) {
     e.preventDefault();
     setErr("");
+
+    if (!isValid) {
+      if (cryptoAssets.length === 0 && contentType.length === 0) {
+        setErr("Please select at least one crypto asset, an investor type, and one content type.");
+    } else if (cryptoAssets.length === 0) {
+        setErr("Please select at least one crypto asset.");
+      } else {
+        setErr("Please select at least one content type.");
+      }
+      return;
+    }
+
     try {
       await api.post(ENDPOINTS.onboarding, {
         crypto_assets: cryptoAssets,
@@ -49,17 +67,18 @@ export default function Onboarding() {
   }
 
   return (
-    <Shell
-      title="Personalize your feed"
-      subtitle="Choose assets, style, and the content you want."
-    >
+    <Shell title="Personalize your feed" subtitle="Choose assets, style, and the content you want.">
       <form onSubmit={onSubmit} className="grid" style={{ gap: 18 }}>
         <div className="card" style={{ background: "transparent" }}>
           <div className="cardInner">
             <div className="label">Crypto assets</div>
             <div className="row" style={{ flexWrap: "wrap", justifyContent: "flex-start" }}>
-              {ASSETS.map(a => (
-                <Pill key={a} active={cryptoAssets.includes(a)} onClick={() => setCryptoAssets(p => toggle(p, a))}>
+              {ASSETS.map((a) => (
+                <Pill
+                  key={a}
+                  active={cryptoAssets.includes(a)}
+                  onClick={() => setCryptoAssets((p) => toggle(p, a))}
+                >
                   {a}
                 </Pill>
               ))}
@@ -71,7 +90,7 @@ export default function Onboarding() {
           <div className="cardInner">
             <div className="label">Investor type</div>
             <div className="row" style={{ flexWrap: "wrap", justifyContent: "flex-start" }}>
-              {TYPES.map(t => (
+              {TYPES.map((t) => (
                 <Pill key={t} active={investorType === t} onClick={() => setInvestorType(t)}>
                   {t}
                 </Pill>
@@ -84,8 +103,12 @@ export default function Onboarding() {
           <div className="cardInner">
             <div className="label">Content</div>
             <div className="row" style={{ flexWrap: "wrap", justifyContent: "flex-start" }}>
-              {CONTENT.map(c => (
-                <Pill key={c} active={contentType.includes(c)} onClick={() => setContentType(p => toggle(p, c))}>
+              {CONTENT.map((c) => (
+                <Pill
+                  key={c}
+                  active={contentType.includes(c)}
+                  onClick={() => setContentType((p) => toggle(p, c))}
+                >
                   {c}
                 </Pill>
               ))}
@@ -96,12 +119,18 @@ export default function Onboarding() {
         {err ? <div className="error">{err}</div> : null}
 
         <div className="formActions">
-
-        <div className="formActionsRight">
-            <Button variant="primary" type="submit">Save</Button>
+          <div className="formActionsRight">
+            <Button
+              variant="primary"
+              type="submit"
+              disabled={!isValid}
+              aria-disabled={!isValid}
+              title={!isValid ? "Select at least one asset and one content type" : "Save"}
+            >
+              Save
+            </Button>
+          </div>
         </div>
-        </div>
-
       </form>
     </Shell>
   );
