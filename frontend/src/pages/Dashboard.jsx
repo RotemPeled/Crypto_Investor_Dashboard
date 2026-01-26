@@ -1,4 +1,3 @@
-// Dashboard.jsx (NEW FILE)
 import React, { useEffect, useState } from "react";
 import { getDashboard } from "../api/dashboard";
 import { saveVote } from "../api/votes";
@@ -6,48 +5,8 @@ import { useAuth } from "../auth/AuthProvider";
 import { useNavigate } from "react-router-dom";
 import Shell from "../ui/Shell";
 import { Button } from "../ui/Form";
-import { ThumbsUp, ThumbsDown } from "lucide-react";
-
-
-function Section({ title, subtitle, right, children }) {
-  return (
-    <div className="card" style={{ background: "transparent" }}>
-      <div className="cardInner">
-        <div className="row" style={{ alignItems: "flex-start" }}>
-          <div>
-            <div style={{ fontSize: 16, letterSpacing: "-0.01em" }}>
-              <b>{title}</b>
-            </div>
-            {subtitle ? (
-              <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 6 }}>
-                {subtitle}
-              </div>
-            ) : null}
-          </div>
-          {right ? <div>{right}</div> : null}
-        </div>
-        <hr className="hr" />
-        {children}
-      </div>
-    </div>
-  );
-}
-
-
-/* --- VoteBar: compact + can be aligned by wrapper --- */
-function VoteBar({ onUp, onDown, className = "" }) {
-    return (
-      <div className={`voteBar ${className}`}>
-        <button className="voteBtn" onClick={onUp} aria-label="Like">
-          <ThumbsUp size={16} strokeWidth={1.6} />
-        </button>
-        <button className="voteBtn" onClick={onDown} aria-label="Dislike">
-          <ThumbsDown size={16} strokeWidth={1.6} />
-        </button>
-      </div>
-    );
-  }
-  
+import Section from "../ui/Section";
+import VoteBar from "../ui/VoteBar";
 
 export default function Dashboard() {
   const nav = useNavigate();
@@ -136,65 +95,45 @@ export default function Dashboard() {
         </div>
       }
     >
-      <div className="grid" style={{ gap: 14 }}>
-        <div className="grid2">
-          <Section
-            title="Prices"
-            subtitle={prices?.error ? `Error: ${prices.error}` : "CoinGecko snapshot (USD)"}
-            right={<span className="badge">{prices?.source || "coingecko"}</span>}
-          >
-            <pre style={{ margin: 0, color: "var(--muted)", overflowX: "auto" }}>
-              {JSON.stringify(prices?.data, null, 2)}
-            </pre>
-
-            {/* compact meta-action, aligned right */}
-            <div className="metaFooter">
-              <VoteBar
-                className="voteBarRight"
-                onUp={() => vote("prices", "prices_block", 1)}
-                onDown={() => vote("prices", "prices_block", -1)}
-              />
-            </div>
-          </Section>
-
-          <Section
-            title="AI Insight"
-            subtitle={ai?.error ? `Error: ${ai.error}` : "Short, investor-type oriented"}
-            right={<span className="badge">{ai?.source || "openrouter"}</span>}
-          >
-            <div className="insightBody">
-              <div className="insightText">{ai?.data}</div>
-
-              {/* right-aligned, subtle */}
-              <div className="metaFooter">
-                <VoteBar
-                  className="voteBarRight"
-                  onUp={() => vote("ai_insight", "today_insight", 1)}
-                  onDown={() => vote("ai_insight", "today_insight", -1)}
-                />
-              </div>
-            </div>
-          </Section>
-        </div>
-
+      <div className="dashboardGrid2x2">
+        {/* 1) Prices (vote next to title) */}
         <Section
-          title="News"
-          subtitle={news?.error ? `Error: ${news.error}` : "Latest headlines"}
-          right={<span className="badge">{news?.source || "cryptopanic"}</span>}
+          title="Coin Prices"
+          headerRight={
+            <VoteBar
+              onUp={() => vote("prices", "prices_block", 1)}
+              onDown={() => vote("prices", "prices_block", -1)}
+            />
+          }
         >
-          <div className="grid" style={{ gap: 12 }}>
-            {(news?.data || []).map((n, idx) => (
-              <div key={idx} className="tile" style={{ padding: 12 }}>
-                <div style={{ fontSize: 14 }}>
-                  <b>{n.title}</b>
-                </div>
-                <div style={{ color: "var(--muted2)", fontSize: 12, marginTop: 6 }}>
-                  {n.published_at || "—"}
-                </div>
+          <pre className="preSoft">{JSON.stringify(prices?.data, null, 2)}</pre>
+        </Section>
+
+        {/* 2) AI Insight (vote next to title) */}
+        <Section
+          title="AI Insight of the Day"
+          headerRight={
+            <VoteBar
+              onUp={() => vote("ai_insight", "today_insight", 1)}
+              onDown={() => vote("ai_insight", "today_insight", -1)}
+            />
+          }
+        >
+          <div className="insightBody">
+            <div className="insightText">{ai?.data}</div>
+          </div>
+        </Section>
+
+        {/* 3) News (each article has its own vote) */}
+        <Section title="Market News">
+          <div className="newsList">
+            {(news?.data || []).slice(0, 6).map((n, idx) => (
+              <div key={idx} className="tile">
+                <div className="tileTitle">{n.title}</div>
+                <div className="tileMeta">{n.published_at || "—"}</div>
 
                 <div className="metaFooter">
                   <VoteBar
-                    className="voteBarRight"
                     onUp={() => vote("news", n.title || String(idx), 1)}
                     onDown={() => vote("news", n.title || String(idx), -1)}
                   />
@@ -204,37 +143,24 @@ export default function Dashboard() {
           </div>
         </Section>
 
-        <Section title="Meme" subtitle="Because the market demands balance." right={<span className="badge">fun</span>}>
-          <div className="row" style={{ alignItems: "flex-start" }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14 }}>
-                <b>{meme?.title}</b>
-              </div>
-              <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 8 }}>Lightweight morale booster.</div>
-
-              <div className="metaFooter">
-                <VoteBar
-                  className="voteBarRight"
-                  onUp={() => vote("meme", meme?.url || "meme", 1)}
-                  onDown={() => vote("meme", meme?.url || "meme", -1)}
-                />
-              </div>
+        {/* 4) Meme (vote next to title + image fills the card) */}
+        <Section
+          title="Meme"
+          headerRight={
+            <VoteBar
+              onUp={() => vote("meme", meme?.url || "meme", 1)}
+              onDown={() => vote("meme", meme?.url || "meme", -1)}
+            />
+          }
+        >
+          {meme?.url ? (
+            <div className="memeWrap">
+              <img src={meme.url} alt="meme" className="memeImgFull" />
+              <div className="memeCaption">{meme?.title || "Daily crypto meme"}</div>
             </div>
-
-            {meme?.url ? (
-              <img
-                src={meme.url}
-                alt="meme"
-                style={{
-                  width: 240,
-                  maxWidth: "40vw",
-                  borderRadius: 18,
-                  border: "1px solid var(--stroke)",
-                  boxShadow: "var(--shadow2)",
-                }}
-              />
-            ) : null}
-          </div>
+          ) : (
+            <div className="badge">No meme</div>
+          )}
         </Section>
       </div>
     </Shell>

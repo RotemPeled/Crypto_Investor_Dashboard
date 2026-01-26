@@ -57,10 +57,13 @@
     --toggleBg: rgba(255,255,255,0.72);
     --toggleStroke: rgba(15,23,42,0.12);
     --toggleShadow: 0 10px 22px rgba(15,23,42,0.10);
+  
+    /* shadows */
+    --shadow2: 0 14px 38px rgba(15,23,42,0.10);
   }
   
   /* =========================
-     NIGHT OVERRIDES — warm glass + multi-accent
+     NIGHT OVERRIDES
      ========================= */
   body.theme-night{
     --text: rgba(255,255,255,0.92);
@@ -72,10 +75,10 @@
   
     --btnBg: rgba(255,255,255,0.10);
     --btnBgHover: rgba(255,255,255,0.14);
-
+  
     --tile: rgba(255,255,255,0.07);
     --tile2: rgba(255,255,255,0.05);
-
+  
     --card: rgba(255,255,255,0.06);
     --card2: rgba(255,255,255,0.04);
   
@@ -88,13 +91,11 @@
     --shadowCard: 0 18px 60px rgba(0,0,0,0.45);
     --shadowBtn: 0 10px 28px rgba(0,0,0,0.30);
   
-    /* multi-accent (so it’s not one flat color) */
     --a1: rgba(210, 140, 60, 0.12);
     --a2: rgba(120, 80, 60, 0.10);
     --a3: rgba(70, 55, 45, 0.12);
     --a4: rgba(90, 60, 40, 0.10);
   
-    /* primary (NIGHT) — soft warm graphite */
     --primaryBg1: rgba(248, 246, 242, 0.92);
     --primaryBg2: rgba(248, 246, 242, 0.82);
     --primaryBorder: rgba(255,255,255,0.18);
@@ -105,10 +106,11 @@
     --dangerBorder: rgba(255, 95, 95, 0.24);
     --dangerText: rgba(255, 215, 215, 0.95);
   
-    /* toggle in night — not harsh */
     --toggleBg: rgba(255,255,255,0.12);
     --toggleStroke: rgba(255,255,255,0.18);
     --toggleShadow: 0 12px 26px rgba(0,0,0,0.35);
+  
+    --shadow2: 0 18px 60px rgba(0,0,0,0.40);
   }
   
   /* =========================
@@ -152,8 +154,44 @@
     max-width: 62ch;
   }
   
+  .sectionTitle{
+    font-size: 16px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+  }
+  .sectionSub{
+    color: var(--muted);
+    font-size: 13px;
+    margin-top: 6px;
+  }
+  
   /* =========================
-     SHELL HEADER (top-right toggle)
+     LAYOUT UTILS
+     ========================= */
+  .grid{ display:grid; gap: 14px; }
+  .grid2{ display:grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 900px){ .grid2{ grid-template-columns: 1fr; } }
+  
+  .row{ display:flex; align-items:center; justify-content:space-between; gap: 12px; }
+  
+  .gap12{ gap: 12px; }
+  .gap14{ gap: 14px; }
+  .alignStart{ align-items: flex-start; }
+  
+  .badge{
+    display:inline-flex;
+    align-items:center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--stroke);
+    background: var(--btnBg);
+    color: var(--muted);
+    font-size: 12px;
+  }
+  
+  /* =========================
+     SHELL HEADER
      ========================= */
   .shellTop{
     display:flex;
@@ -192,6 +230,15 @@
     border: 1px solid var(--stroke);
     border-radius: 16px;
     padding: 12px;
+  }
+  .tileTitle{
+    font-size: 14px;
+    font-weight: 650;
+  }
+  .tileMeta{
+    color: var(--muted2);
+    font-size: 12px;
+    margin-top: 6px;
   }
   
   /* =========================
@@ -244,7 +291,11 @@
     box-shadow: var(--primaryShadow);
   }
   .btnPrimary:hover{
-    background: linear-gradient(180deg, color-mix(in srgb, var(--primaryBg1) 94%, #ffffff 6%), color-mix(in srgb, var(--primaryBg2) 92%, #ffffff 8%));
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--primaryBg1) 94%, #ffffff 6%),
+      color-mix(in srgb, var(--primaryBg2) 92%, #ffffff 8%)
+    );
   }
   
   .btnDanger{
@@ -257,9 +308,9 @@
   }
   
   /* =========================
-     THEME TOGGLE (icon pill)
+     THEME TOGGLE
      ========================= */
-    .themeToggle{
+  .themeToggle{
     width: 38px;
     height: 38px;
     display: inline-flex;
@@ -277,8 +328,6 @@
   body.theme-night .themeToggle{
     box-shadow: 0 16px 40px rgba(0,0,0,0.35);
   }
-  
-    
   .themeToggle:hover{ transform: translateY(-1px); }
   .themeToggle:active{ transform: translateY(0px) scale(0.98); }
   .themeIcon{
@@ -354,7 +403,7 @@
   }
   
   /* =========================
-     PRE
+     PRE (soft)
      ========================= */
   pre{
     background: color-mix(in srgb, var(--text) 4%, transparent);
@@ -365,13 +414,16 @@
     margin: 0;
     color: color-mix(in srgb, var(--text) 78%, transparent);
   }
+  .preSoft{ margin: 0; color: var(--muted); overflow-x: auto; }
   
+  /* =========================
+     FORM ACTIONS
+     ========================= */
   .formActions{
     display:flex;
     align-items:center;
     gap: 14px;
   }
-  
   .formActionsLeft{
     flex: 1;
     min-width: 0;
@@ -379,107 +431,117 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  
   .formActionsRight{
     margin-left: auto;
     flex: 0 0 auto;
   }
-
-  .grid{ display:grid; gap: 14px; }
-.grid2{ display:grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-@media (max-width: 900px){ .grid2{ grid-template-columns: 1fr; } }
-
-.row{ display:flex; align-items:center; justify-content:space-between; gap: 12px; }
-
-.badge{
-  display:inline-flex;
-  align-items:center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--stroke);
-  background: var(--btnBg);
-  color: var(--muted);
-  font-size: 12px;
-}
-
-:root{ --shadow2: 0 14px 38px rgba(15,23,42,0.10); }
-body.theme-night{ --shadow2: 0 18px 60px rgba(0,0,0,0.40); }
-
-
-/* =========================
-   MISSING LAYOUT UTILS
-   ========================= */
-   .grid{ display:grid; gap: 14px; }
-
-   .grid2{ display:grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-   @media (max-width: 900px){ .grid2{ grid-template-columns: 1fr; } }
-   
-   .row{ display:flex; align-items:center; justify-content:space-between; gap: 12px; }
-   
-   .badge{
-     display:inline-flex;
-     align-items:center;
-     gap: 8px;
-     padding: 8px 10px;
-     border-radius: 999px;
-     border: 1px solid var(--stroke);
-     background: var(--btnBg);
-     color: var(--muted);
-     font-size: 12px;
-   }
-   
-   /* used in Dashboard meme image shadow */
-   :root{ --shadow2: 0 14px 38px rgba(15,23,42,0.10); }
-   body.theme-night{ --shadow2: 0 18px 60px rgba(0,0,0,0.40); }
-   
-   /* --- voting (premium) --- */
-.voteBar{
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.metaFooter{
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--stroke);
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  opacity: .55;
-}
-
-/* IMPORTANT: wipe generic button styles */
-.voteBtn{
-  all: unset;
-  box-sizing: border-box;
-  width: 28px;
-  height: 28px;
-  border-radius: 999px;
-  border: 1px solid var(--stroke);
-  background: transparent;
-  color: var(--muted);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: transform .12s ease, opacity .12s ease, color .15s ease, background .15s ease;
-  line-height: 0;
-}
-
-.voteBtn svg{
-  display: block;
-  transform: translateY(0.5px);
-}
-
-.voteBtn:hover{
-  opacity: 1;
-  color: var(--text);
-  background: var(--btnBg);
-  transform: translateY(-1px);
-}
-
-.voteBtn:active{
-  transform: translateY(0px) scale(.97);
-}
+  
+  /* =========================
+     VOTING
+     ========================= */
+  .voteBar{
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+  }
+  
+  .voteBtn{
+    all: unset;
+    box-sizing: border-box;
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    border: 1px solid var(--stroke);
+    background: transparent;
+    color: var(--muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform .12s ease, opacity .12s ease, color .15s ease, background .15s ease;
+    line-height: 0;
+  }
+  .voteBtn svg{
+    display: block;
+    transform: translateY(0.5px);
+  }
+  .voteBtn:hover{
+    opacity: 1;
+    color: var(--text);
+    background: var(--btnBg);
+    transform: translateY(-1px);
+  }
+  .voteBtn:active{
+    transform: translateY(0px) scale(.97);
+  }
+  
+  /* Used only inside news tiles now */
+  .metaFooter{
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--stroke);
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    opacity: .6;
+    transition: opacity .15s ease;
+  }
+  .tile:hover .metaFooter{ opacity: 1; }
+  
+  /* =========================
+     DASHBOARD GRID 2x2
+     ========================= */
+  .dashboardGrid2x2{
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  @media (max-width: 900px){
+    .dashboardGrid2x2{ grid-template-columns: 1fr; }
+  }
+  
+  /* News list stays tidy inside a card */
+  .newsList{
+    display: grid;
+    gap: 12px;
+    max-height: 520px;
+    overflow: auto;
+    padding-right: 2px;
+  }
+  
+  /* =========================
+     SECTION HEADER (title + votes)
+     ========================= */
+  .sectionHeader{
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap: 12px;
+  }
+  .sectionHeaderRight{
+    display:flex;
+    align-items:center;
+    gap: 10px;
+  }
+  
+  /* =========================
+     MEME (fills the card)
+     ========================= */
+  .memeWrap{
+    display: grid;
+    gap: 10px;
+  }
+  .memeImgFull{
+    width: 100%;
+    height: 260px;       /* אפשר לשחק 220–320 */
+    object-fit: cover;
+    border-radius: 18px;
+    border: 1px solid var(--stroke);
+    box-shadow: var(--shadow2);
+  }
+  .memeCaption{
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  
