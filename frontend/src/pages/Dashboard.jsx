@@ -145,7 +145,17 @@ export default function Dashboard() {
             />
           }
         >
-          <pre className="preSoft">{JSON.stringify(prices?.data, null, 2)}</pre>
+          <div className="pricesTable">
+            {(prices?.data ? Object.entries(prices.data) : []).map(([coin, v]) => (
+              <div key={coin} className="pricesRow">
+                <div className="pricesCoin">
+                  <div className="pricesName">{coin}</div>
+                </div>
+                <div className="pricesValue">${Number(v?.usd ?? 0).toLocaleString()}</div>
+              </div>
+            ))}
+          </div>
+
         </Section>
 
         <Section
