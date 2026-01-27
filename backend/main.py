@@ -13,7 +13,6 @@ import httpx
 from fastapi.middleware.cors import CORSMiddleware
 from db import init_db, engine
 
-
 load_dotenv()
 app = FastAPI()
 
@@ -54,23 +53,6 @@ class VoteReq(BaseModel):
     section: str  
     item: str 
     value: int      
-
-
-def get_user_id(creds: HTTPAuthorizationCredentials = Depends(bearer)):
-    token = creds.credentials
-
-    secret = os.getenv("JWT_SECRET")
-    if not secret:
-        raise HTTPException(500, "JWT_SECRET is not set")
-    alg = os.getenv("JWT_ALGORITHM", "HS256")
-
-    try:
-        payload = jwt.decode(token, secret, algorithms=[alg])
-        return int(payload["sub"])
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(401, "Token expired")
-    except Exception:
-        raise HTTPException(401, "Invalid token")
 
 COINGECKO_IDS = {
     "BTC": "bitcoin",
@@ -117,6 +99,22 @@ DEFAULT_MEME_POOL = [
     {"title": "To the moon", "url": "https://i.imgflip.com/30b1gx.jpg"},
     {"title": "Buy high sell low", "url": "https://i.imgflip.com/1ur9b0.jpg"},
 ]
+
+def get_user_id(creds: HTTPAuthorizationCredentials = Depends(bearer)):
+    token = creds.credentials
+
+    secret = os.getenv("JWT_SECRET")
+    if not secret:
+        raise HTTPException(500, "JWT_SECRET is not set")
+    alg = os.getenv("JWT_ALGORITHM", "HS256")
+
+    try:
+        payload = jwt.decode(token, secret, algorithms=[alg])
+        return int(payload["sub"])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Token expired")
+    except Exception:
+        raise HTTPException(401, "Invalid token")
 
 def _ensure_json(value, default):
     if value is None:
@@ -184,6 +182,26 @@ def save_daily_dashboard(conn, user_id: int, day: date, sections: dict):
     })
     conn.commit()
 
+def update_daily_section(conn, user_id: int, day: date, section_key: str, section_value):
+    q = text("""
+        UPDATE daily_dashboard
+        SET sections = jsonb_set(
+            sections,
+            ARRAY[:section_key],
+            CAST(:value AS jsonb),
+            true
+        )
+        WHERE user_id = :user_id AND day = :day
+    """)
+    conn.execute(q, {
+        "user_id": user_id,
+        "day": day,
+        "section_key": section_key,
+        "value": json.dumps(section_value),
+    })
+    conn.commit()
+
+
 def pick_meme(prefs: dict):
     investor_type = (prefs.get("investor_type") or "").lower()
     content = prefs.get("content_type") or []  # אמור להיות list (JSON)
@@ -219,6 +237,99 @@ def create_access_token(user_id: int):
         "exp": datetime.utcnow() + timedelta(hours=1),
     }
     return jwt.encode(payload, secret, algorithm=alg)
+
+async def fetch_prices(client: httpx.AsyncClient, assets: list[str]):
+    prices = {"source": "coingecko", "data": {}, "error": None}
+
+    ids = [COINGECKO_IDS.get(sym) for sym in assets]
+    ids = [x for x in ids if x]
+    if not ids:
+        prices["error"] = "No supported assets (add mapping in COINGECKO_IDS)"
+        return prices
+
+    try:
+        base = coingecko_base_url()
+        params = {"ids": ",".join(ids), "vs_currencies": "usd"}
+        cg_key = os.getenv("COINGECKO_API_KEY")
+        headers = {"x-cg-pro-api-key": cg_key} if cg_key else {}
+
+        r = await client.get(f"{base}/simple/price", params=params, headers=headers)
+        if r.status_code == 200:
+            prices["data"] = r.json()
+        else:
+            prices["error"] = f"CoinGecko status {r.status_code}"
+    except Exception as e:
+        prices["error"] = str(e)
+
+    return prices
+
+
+async def fetch_news(client: httpx.AsyncClient, prefs: dict):
+    news = {"source": "cryptopanic", "data": [], "error": None}
+    token = os.getenv("CRYPTOPANIC_TOKEN")
+
+    if not token:
+        news["error"] = "CRYPTOPANIC_TOKEN missing (showing fallback)"
+        news["data"] = [{"title": "No CryptoPanic token configured", "published_at": None}]
+        return news
+
+    # כרגע נשאיר כמו שיש לך (10 ראשונים). אחרי זה נשפר ל-3–5 רלוונטיים.
+    try:
+        rn = await client.get(
+            "https://cryptopanic.com/api/developer/v2/posts/",
+            params={"auth_token": token, "public": "true"},
+        )
+        if rn.status_code == 200:
+            data = rn.json().get("results") or []
+            news["data"] = [
+                {"title": item.get("title"), "published_at": item.get("published_at")}
+                for item in data[:10]
+            ]
+        else:
+            news["error"] = f"CryptoPanic status {rn.status_code}"
+    except Exception as e:
+        news["error"] = str(e)
+
+    return news
+
+
+async def fetch_ai_insight(client: httpx.AsyncClient, investor_type: str, assets: list[str]):
+    insight = {"source": "openrouter", "data": None, "error": None}
+    key = os.getenv("OPENROUTER_API_KEY")
+
+    if not key:
+        insight["error"] = "OPENROUTER_API_KEY missing (showing fallback)"
+        insight["data"] = "No AI key configured yet."
+        return insight
+
+    try:
+        prompt = (
+            f"Give ONE short crypto insight for a {investor_type}. "
+            f"Assets: {assets}. Keep under 40 words."
+        )
+        ai = await client.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json={
+                "model": "openai/gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+            },
+        )
+        if ai.status_code == 200:
+            j = ai.json()
+            insight["data"] = j["choices"][0]["message"]["content"]
+        else:
+            insight["error"] = f"OpenRouter status {ai.status_code}"
+            insight["data"] = "AI key configured but request failed."
+    except Exception as e:
+        insight["error"] = str(e)
+        insight["data"] = "AI request failed."
+
+    return insight
+
+
+def fetch_meme(prefs: dict):
+    return pick_meme(prefs)
 
 # saving new user in DB
 @app.post("/auth/signup")
@@ -322,10 +433,8 @@ def save_onboarding(data: OnboardingReq, user_id: int = Depends(get_user_id)):
         )
 
     return {"message": "onboarding saved"}
-
 @app.get("/dashboard")
 async def dashboard(user_id: int = Depends(get_user_id)):
-    # load user preferences 
     with engine.connect() as conn:
         prefs = load_user_preferences(conn, user_id)
 
@@ -342,13 +451,25 @@ async def dashboard(user_id: int = Depends(get_user_id)):
 
     if DEV_MODE:
         sections = {
-            "prices": {"source": "mock", "data": {"bitcoin": {"usd": 65000}, "ethereum": {"usd": 3200}}, "error": None},
-            "news": {"source": "mock", "data": [
-                {"title": "Bitcoin holds steady as volatility drops", "published_at": str(today)},
-                {"title": "ETH staking demand rises ahead of upgrade rumors", "published_at": str(today)},
-            ], "error": None},
-            "ai_insight": {"source": "mock", "data": "Keep risk controlled. Scale in slowly, avoid chasing candles.", "error": None},
-            "meme": pick_meme(prefs),
+            "prices": {
+                "source": "mock",
+                "data": {"bitcoin": {"usd": 65000}, "ethereum": {"usd": 3200}},
+                "error": None,
+            },
+            "news": {
+                "source": "mock",
+                "data": [
+                    {"title": "Bitcoin holds steady as volatility drops", "published_at": str(today)},
+                    {"title": "ETH staking demand rises ahead of upgrade rumors", "published_at": str(today)},
+                ],
+                "error": None,
+            },
+            "ai_insight": {
+                "source": "mock",
+                "data": "Keep risk controlled. Scale in slowly, avoid chasing candles.",
+                "error": None,
+            },
+            "meme": fetch_meme(prefs),
         }
 
         with engine.connect() as conn:
@@ -359,87 +480,12 @@ async def dashboard(user_id: int = Depends(get_user_id)):
     assets = [a.upper() for a in prefs["crypto_assets"]]
     investor_type = prefs["investor_type"]
 
-    prices = {"source": "coingecko", "data": {}, "error": None}
-    news = {"source": "cryptopanic", "data": [], "error": None}
-    insight = {"source": "openrouter", "data": None, "error": None}
-    meme = pick_meme(prefs)
-
-    ids = [COINGECKO_IDS.get(sym) for sym in assets]
-    ids = [x for x in ids if x]
-    if not ids:
-        prices["error"] = "No supported assets (add mapping in COINGECKO_IDS)"
-
-    cryptopanic_token = os.getenv("CRYPTOPANIC_TOKEN")
-    openrouter_key = os.getenv("OPENROUTER_API_KEY")
-
     async with httpx.AsyncClient(timeout=12) as client:
-        # --- COINGECKO ---
-        if ids:
-            try:
-                base = coingecko_base_url()
-                params = {"ids": ",".join(ids), "vs_currencies": "usd"}
-                cg_key = os.getenv("COINGECKO_API_KEY")
-                headers = {"x-cg-pro-api-key": cg_key} if cg_key else {}
+        prices = await fetch_prices(client, assets)
+        news = await fetch_news(client, prefs)
+        insight = await fetch_ai_insight(client, investor_type, assets)
 
-                r = await client.get(f"{base}/simple/price", params=params, headers=headers)
-                if r.status_code == 200:
-                    prices["data"] = r.json()
-                else:
-                    prices["error"] = f"CoinGecko status {r.status_code}"
-            except Exception as e:
-                prices["error"] = str(e)
-
-        # --- CRYPTOPANIC ---
-        if not cryptopanic_token:
-            news["error"] = "CRYPTOPANIC_TOKEN missing (showing fallback)"
-            news["data"] = [{"title": "No CryptoPanic token configured", "published_at": None}]
-        else:
-            try:
-                rn = await client.get(
-                    "https://cryptopanic.com/api/developer/v2/posts/",
-                    params={"auth_token": cryptopanic_token, "public": "true"},
-                )
-                if rn.status_code == 200:
-                    data = rn.json().get("results") or []
-                    news["data"] = [
-                        {"title": item.get("title"), "published_at": item.get("published_at")}
-                        for item in data[:10]
-                    ]
-                else:
-                    news["error"] = f"CryptoPanic status {rn.status_code}"
-            except Exception as e:
-                news["error"] = str(e)
-
-        # --- OPENROUTER ---
-        if not openrouter_key:
-            insight["error"] = "OPENROUTER_API_KEY missing (showing fallback)"
-            insight["data"] = "No AI key configured yet."
-        else:
-            try:
-                prompt = (
-                    f"Give ONE short crypto insight for a {investor_type}. "
-                    f"Assets: {assets}. Keep under 40 words."
-                )
-                ai = await client.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {openrouter_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": "openai/gpt-3.5-turbo",
-                        "messages": [{"role": "user", "content": prompt}],
-                    },
-                )
-                if ai.status_code == 200:
-                    j = ai.json()
-                    insight["data"] = j["choices"][0]["message"]["content"]
-                else:
-                    insight["error"] = f"OpenRouter status {ai.status_code}"
-                    insight["data"] = "AI key configured but request failed."
-            except Exception as e:
-                insight["error"] = str(e)
-                insight["data"] = "AI request failed."
+    meme = fetch_meme(prefs)
 
     sections = {
         "prices": prices,
@@ -453,6 +499,47 @@ async def dashboard(user_id: int = Depends(get_user_id)):
 
     return {"preferences": prefs, "sections": sections}
 
+@app.post("/dashboard/refresh/{section}")
+async def refresh_section(
+    section: str,
+    user_id: int = Depends(get_user_id)
+):
+    allowed = {"prices", "news", "ai_insight", "meme"}
+    if section not in allowed:
+        raise HTTPException(400, "Invalid section")
+
+    with engine.connect() as conn:
+        prefs = load_user_preferences(conn, user_id)
+    if prefs is None:
+        raise HTTPException(400, "Onboarding not completed")
+
+    today = date.today()
+
+    with engine.connect() as conn:
+        existing = load_daily_dashboard(conn, user_id, today)
+    if existing is None:
+        raise HTTPException(400, "Daily dashboard not generated yet. Call GET /dashboard first.")
+
+    assets = [a.upper() for a in prefs["crypto_assets"]]
+    investor_type = prefs["investor_type"]
+
+    async with httpx.AsyncClient(timeout=12) as client:
+        if section == "prices":
+            new_value = await fetch_prices(client, assets)
+        elif section == "news":
+            new_value = await fetch_news(client, prefs)
+        elif section == "ai_insight":
+            new_value = await fetch_ai_insight(client, investor_type, assets)
+        elif section == "meme":
+            new_value = fetch_meme(prefs)
+
+    with engine.connect() as conn:
+        update_daily_section(conn, user_id, today, section, new_value)
+
+    with engine.connect() as conn:
+        updated_sections = load_daily_dashboard(conn, user_id, today)
+
+    return {"preferences": prefs, "sections": updated_sections, "updated": section}
 
 @app.post("/votes")
 def vote(data: VoteReq, user_id: int = Depends(get_user_id)):

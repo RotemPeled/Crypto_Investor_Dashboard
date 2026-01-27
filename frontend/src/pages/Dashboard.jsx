@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from "react";
-import { getDashboard } from "../api/dashboard";
+import { getDashboard, refreshSection } from "../api/dashboard";
 import { saveVote, getVotesToday } from "../api/votes";
 import { useAuth } from "../auth/AuthProvider";
 import { useNavigate } from "react-router-dom";
 import Shell from "../ui/Shell";
 import { Button } from "../ui/Form";
 import Section from "../ui/Section";
-import VoteBar from "../ui/VoteBar";
+import { VoteBar, RefreshIconButton } from "../ui/IconActions";
 import { useToast } from "../ui/ToastProvider";
 
 export default function Dashboard() {
@@ -16,24 +16,24 @@ export default function Dashboard() {
 
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
+  const [refreshBusy, setRefreshBusy] = useState({}); // section -> true
 
   // persistent selection (in-session)
-  const [votes, setVotes] = useState({});       // key -> 1 / -1
+  const [votes, setVotes] = useState({}); // key -> 1 / -1
   const [voteBusy, setVoteBusy] = useState({}); // key -> true
-
 
   async function load() {
     setErr("");
     try {
       const d = await getDashboard();
       setData(d);
-      const todayVotes = await getVotesToday(); 
+
+      const todayVotes = await getVotesToday();
       const map = {};
       for (const v of todayVotes) {
         map[`${v.section}::${v.item}`] = v.value;
       }
       setVotes(map);
-
     } catch (e2) {
       if (e2?.response?.status === 401) {
         logout();
@@ -44,25 +44,50 @@ export default function Dashboard() {
     }
   }
 
+  async function refresh(section) {
+    if (refreshBusy[section]) return;
+
+    setRefreshBusy((p) => ({ ...p, [section]: true }));
+    try {
+      const d = await refreshSection(section);
+      setData(d);
+
+      // reload today's votes (content may change)
+      const todayVotes = await getVotesToday();
+      const map = {};
+      for (const v of todayVotes) {
+        map[`${v.section}::${v.item}`] = v.value;
+      }
+      setVotes(map);
+
+    } catch (e) {
+      if (e?.response?.status === 401) {
+        logout();
+        nav("/login");
+        return;
+      }
+    } finally {
+      setRefreshBusy((p) => {
+        const copy = { ...p };
+        delete copy[section];
+        return copy;
+      });
+    }
+  }
+
   async function vote(section, item, value) {
     const key = `${section}::${item}`;
     const current = votes[key] || 0;
 
-    // same vote again => do nothing
-    if (current === value) {
-      return;
-    }
-
+    if (current === value) return;
     if (voteBusy[key]) return;
 
-    // optimistic UI: keep selected
     setVotes((p) => ({ ...p, [key]: value }));
     setVoteBusy((p) => ({ ...p, [key]: true }));
 
     try {
       await saveVote({ section, item, value });
     } catch {
-      // rollback
       setVotes((p) => ({ ...p, [key]: current }));
     } finally {
       setVoteBusy((p) => {
@@ -137,12 +162,19 @@ export default function Dashboard() {
         <Section
           title="Coin Prices"
           headerRight={
-            <VoteBar
-              selected={votes["prices::prices_block"] || 0}
-              disabled={!!voteBusy["prices::prices_block"]}
-              onUp={() => vote("prices", "prices_block", 1)}
-              onDown={() => vote("prices", "prices_block", -1)}
-            />
+            <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+              <RefreshIconButton
+                onClick={() => refresh("prices")}
+                loading={!!refreshBusy["prices"]}
+                title="Refresh prices"
+              />
+              <VoteBar
+                selected={votes["prices::prices_block"] || 0}
+                disabled={!!voteBusy["prices::prices_block"]}
+                onUp={() => vote("prices", "prices_block", 1)}
+                onDown={() => vote("prices", "prices_block", -1)}
+              />
+            </div>
           }
         >
           <div className="pricesTable">
@@ -155,18 +187,24 @@ export default function Dashboard() {
               </div>
             ))}
           </div>
-
         </Section>
 
         <Section
           title="AI Insight of the Day"
           headerRight={
-            <VoteBar
-              selected={votes["ai_insight::today_insight"] || 0}
-              disabled={!!voteBusy["ai_insight::today_insight"]}
-              onUp={() => vote("ai_insight", "today_insight", 1)}
-              onDown={() => vote("ai_insight", "today_insight", -1)}
-            />
+            <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+              <RefreshIconButton
+                onClick={() => refresh("ai_insight")}
+                loading={!!refreshBusy["ai_insight"]}
+                title="Refresh AI insight"
+              />
+              <VoteBar
+                selected={votes["ai_insight::today_insight"] || 0}
+                disabled={!!voteBusy["ai_insight::today_insight"]}
+                onUp={() => vote("ai_insight", "today_insight", 1)}
+                onDown={() => vote("ai_insight", "today_insight", -1)}
+              />
+            </div>
           }
         >
           <div className="insightBody">
@@ -174,7 +212,18 @@ export default function Dashboard() {
           </div>
         </Section>
 
-        <Section title="Market News">
+        <Section
+          title="Market News"
+          headerRight={
+            <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+              <RefreshIconButton
+                onClick={() => refresh("news")}
+                loading={!!refreshBusy["news"]}
+                title="Refresh news"
+              />
+            </div>
+          }
+        >
           <div className="newsList">
             {(news?.data || []).slice(0, 6).map((n, idx) => {
               const itemKey = n.title || String(idx);
@@ -201,12 +250,19 @@ export default function Dashboard() {
         <Section
           title="Meme"
           headerRight={
-            <VoteBar
-              selected={votes[`meme::${meme?.url || "meme"}`] || 0}
-              disabled={!!voteBusy[`meme::${meme?.url || "meme"}`]}
-              onUp={() => vote("meme", meme?.url || "meme", 1)}
-              onDown={() => vote("meme", meme?.url || "meme", -1)}
-            />
+            <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+              <RefreshIconButton
+                onClick={() => refresh("meme")}
+                loading={!!refreshBusy["meme"]}
+                title="Refresh meme"
+              />
+              <VoteBar
+                selected={votes[`meme::${meme?.url || "meme"}`] || 0}
+                disabled={!!voteBusy[`meme::${meme?.url || "meme"}`]}
+                onUp={() => vote("meme", meme?.url || "meme", 1)}
+                onDown={() => vote("meme", meme?.url || "meme", -1)}
+              />
+            </div>
           }
         >
           {meme?.url ? (
