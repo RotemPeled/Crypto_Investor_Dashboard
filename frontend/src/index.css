@@ -527,17 +527,20 @@
   /* =========================
      MEME (fills the card)
      ========================= */
-  .memeWrap{
-    display: grid;
-    gap: 10px;
+    .memeWrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
   }
-  .memeImgFull{
-    width: 100%;
-    height: 260px;       /* אפשר לשחק 220–320 */
-    object-fit: cover;
-    border-radius: 18px;
-    border: 1px solid var(--stroke);
-    box-shadow: var(--shadow2);
+  .memeImgFull {
+    max-width: 300px;
+    max-height: 300px;          
+    width: auto;
+    height: auto;
+    object-fit: contain;        
+    border-radius: 16px;
   }
   .memeCaption{
     font-size: 13px;

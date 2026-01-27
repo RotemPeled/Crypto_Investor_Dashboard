@@ -1,6 +1,6 @@
 import os
 import jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from fastapi import FastAPI, HTTPException, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -11,11 +11,12 @@ import json
 import random
 import httpx
 from fastapi.middleware.cors import CORSMiddleware
+from db import init_db, engine
+
 
 load_dotenv()
 app = FastAPI()
 
-from db import init_db, engine
 @app.on_event("startup")
 def on_startup():
     init_db()
@@ -23,9 +24,13 @@ def on_startup():
 bearer = HTTPBearer()
 DEV_MODE = os.getenv("DEV_MODE", "false").lower() == "true"
 
+def _parse_origins():
+    raw = os.getenv("ALLOW_ORIGINS", "http://localhost:5173")
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=_parse_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -76,6 +81,53 @@ COINGECKO_IDS = {
     "DOGE": "dogecoin",
 }
 
+MEMES_BY_INVESTOR = {
+    "hodler": [
+        {"title": "HODL mode", "url": "https://i.imgflip.com/1bij.jpg"},
+        {"title": "Diamond hands", "url": "https://i.imgflip.com/4/3si4.jpg"},
+    ],
+    "day_trader": [
+        {"title": "To the moon", "url": "https://i.imgflip.com/30b1gx.jpg"},
+        {"title": "1m candle PTSD", "url": "https://i.imgflip.com/1ur9b0.jpg"},
+    ],
+    "nft_collector": [
+        {"title": "JPEG investor", "url": "https://i.imgflip.com/2/1otk96.jpg"},
+        {"title": "Floor price vibes", "url": "https://i.imgflip.com/26am.jpg"},
+    ],
+}
+
+MEMES_BY_CONTENT = {
+    "fun": [
+        {"title": "Buy high sell low", "url": "https://i.imgflip.com/1ur9b0.jpg"},
+        {"title": "Crypto mood", "url": "https://i.imgflip.com/4/1g8my4.jpg"},
+    ],
+    "social": [
+        {"title": "Twitter experts", "url": "https://i.imgflip.com/4/2wifvo.jpg"},
+    ],
+    "market news": [
+        {"title": "Breaking news panic", "url": "https://i.imgflip.com/4/1bij.jpg"},
+    ],
+    "charts": [
+        {"title": "Staring at charts", "url": "https://i.imgflip.com/4/1e7ql7.jpg"},
+    ],
+}
+
+DEFAULT_MEME_POOL = [
+    {"title": "HODL mode", "url": "https://i.imgflip.com/1bij.jpg"},
+    {"title": "To the moon", "url": "https://i.imgflip.com/30b1gx.jpg"},
+    {"title": "Buy high sell low", "url": "https://i.imgflip.com/1ur9b0.jpg"},
+]
+
+def _ensure_json(value, default):
+    if value is None:
+        return default
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except Exception:
+            return default
+    return value
+
 def load_user_preferences(conn, user_id: int):
     q = text("""
         SELECT crypto_assets, investor_type, content_type
@@ -87,13 +139,14 @@ def load_user_preferences(conn, user_id: int):
     if row is None:
         return None
 
-    assets = row.crypto_assets
-    content = row.content_type
+    assets = _ensure_json(row.crypto_assets, [])
+    content = _ensure_json(row.content_type, [])
 
-    if isinstance(assets, str):
-        assets = json.loads(assets)
-    if isinstance(content, str):
-        content = json.loads(content)
+    # להבטיח טיפוסים צפויים:
+    if not isinstance(assets, list):
+        assets = [assets]
+    if not isinstance(content, list):
+        content = [content]
 
     return {
         "crypto_assets": assets,
@@ -101,42 +154,41 @@ def load_user_preferences(conn, user_id: int):
         "content_type": content,
     }
 
+def load_daily_dashboard(conn, user_id: int, day: date):
+    q = text("""
+        SELECT sections
+        FROM daily_dashboard
+        WHERE user_id = :user_id AND day = :day
+        LIMIT 1
+    """)
+    row = conn.execute(q, {"user_id": user_id, "day": day}).fetchone()
+    if row is None:
+        return None
+
+    sections = row.sections
+    if isinstance(sections, str):
+        sections = json.loads(sections)
+
+    return sections
+
+def save_daily_dashboard(conn, user_id: int, day: date, sections: dict):
+    q = text("""
+        INSERT INTO daily_dashboard (user_id, day, sections)
+        VALUES (:user_id, :day, CAST(:sections AS jsonb))
+        ON CONFLICT (user_id, day) DO NOTHING
+    """)
+    conn.execute(q, {
+        "user_id": user_id,
+        "day": day,
+        "sections": json.dumps(sections),
+    })
+    conn.commit()
+
 def pick_meme(prefs: dict):
     investor_type = (prefs.get("investor_type") or "").lower()
     content = prefs.get("content_type") or []  # אמור להיות list (JSON)
 
     content_set = set([str(x).lower() for x in (content if isinstance(content, list) else [content])])
-
-    MEMES_BY_INVESTOR = {
-        "hodler": [
-            {"title": "HODL mode", "url": "https://i.imgflip.com/1bij.jpg"},
-            {"title": "Diamond hands", "url": "https://i.imgflip.com/4/3si4.jpg"},
-        ],
-        "day_trader": [
-            {"title": "To the moon", "url": "https://i.imgflip.com/30b1gx.jpg"},
-            {"title": "1m candle PTSD", "url": "https://i.imgflip.com/1ur9b0.jpg"},
-        ],
-        "nft_collector": [
-            {"title": "JPEG investor", "url": "https://i.imgflip.com/2/1otk96.jpg"},
-            {"title": "Floor price vibes", "url": "https://i.imgflip.com/26am.jpg"},
-        ],
-    }
-
-    MEMES_BY_CONTENT = {
-        "fun": [
-            {"title": "Buy high sell low", "url": "https://i.imgflip.com/1ur9b0.jpg"},
-            {"title": "Crypto mood", "url": "https://i.imgflip.com/4/1g8my4.jpg"},
-        ],
-        "social": [
-            {"title": "Twitter experts", "url": "https://i.imgflip.com/4/2wifvo.jpg"},
-        ],
-        "market news": [
-            {"title": "Breaking news panic", "url": "https://i.imgflip.com/4/1bij.jpg"},
-        ],
-        "charts": [
-            {"title": "Staring at charts", "url": "https://i.imgflip.com/4/1e7ql7.jpg"},
-        ],
-    }
 
     pool = []
 
@@ -148,11 +200,7 @@ def pick_meme(prefs: dict):
             pool += arr
 
     if not pool:
-        pool = [
-            {"title": "HODL mode", "url": "https://i.imgflip.com/1bij.jpg"},
-            {"title": "To the moon", "url": "https://i.imgflip.com/30b1gx.jpg"},
-            {"title": "Buy high sell low", "url": "https://i.imgflip.com/1ur9b0.jpg"},
-        ]
+        pool = DEFAULT_MEME_POOL
 
     return random.choice(pool)
 
@@ -161,6 +209,17 @@ def coingecko_base_url():
     return "https://pro-api.coingecko.com/api/v3" if mode == "pro" else "https://api.coingecko.com/api/v3"
 
     
+def create_access_token(user_id: int):
+    secret = os.getenv("JWT_SECRET")
+    if not secret:
+        raise HTTPException(500, "JWT_SECRET is not set")
+    alg = os.getenv("JWT_ALGORITHM", "HS256")
+    payload = {
+        "sub": str(user_id),
+        "exp": datetime.utcnow() + timedelta(hours=1),
+    }
+    return jwt.encode(payload, secret, algorithm=alg)
+
 # saving new user in DB
 @app.post("/auth/signup")
 def signup(data: SignupReq):
@@ -191,17 +250,7 @@ def signup(data: SignupReq):
         except Exception:
             raise HTTPException(400, "User already exists")
 
-    # generate JWT (זהה ל-login)
-    secret = os.getenv("JWT_SECRET")
-    if not secret:
-        raise HTTPException(500, "JWT_SECRET is not set")
-
-    alg = os.getenv("JWT_ALGORITHM", "HS256")
-    payload = {
-        "sub": str(user_id),
-        "exp": datetime.utcnow() + timedelta(hours=1),
-    }
-    token = jwt.encode(payload, secret, algorithm=alg)
+    token = create_access_token(user_id)
 
     return {
         "message": "user has been created successfully",
@@ -230,16 +279,9 @@ def login(data: LoginReq):
         if not valid:
             raise HTTPException(401, "Invalid email or password")
         
-        # generate JWT token
-        secret = os.getenv("JWT_SECRET")
-        if not secret:
-            raise HTTPException(status_code=500, detail="JWT_SECRET is not set")
-        alg = os.getenv("JWT_ALGORITHM", "HS256")
-        payload = {"sub": str(user_id), "exp": datetime.utcnow() + timedelta(hours=1)}
-        token = jwt.encode(payload, secret, algorithm=alg)
-
+        token = create_access_token(user_id)
         return {"access_token": token, "token_type": "bearer"}
-
+    
 # get current user info
 @app.get("/me")
 def me(user_id: int = Depends(get_user_id)):
@@ -274,7 +316,6 @@ def save_onboarding(data: OnboardingReq, user_id: int = Depends(get_user_id)):
             conn.commit()
 
     except Exception:
-        from fastapi import HTTPException
         raise HTTPException(
             status_code=409,
             detail="Onboarding already completed"
@@ -291,19 +332,29 @@ async def dashboard(user_id: int = Depends(get_user_id)):
     if prefs is None:
         raise HTTPException(400, "Onboarding not completed")
 
+    today = date.today()
+
+    with engine.connect() as conn:
+        existing_sections = load_daily_dashboard(conn, user_id, today)
+
+    if existing_sections is not None:
+        return {"preferences": prefs, "sections": existing_sections}
+
     if DEV_MODE:
-        return {
-            "preferences": prefs,
-            "sections": {
-                "prices": {"source": "mock", "data": {"bitcoin": {"usd": 65000}, "ethereum": {"usd": 3200}}, "error": None},
-                "news": {"source": "mock", "data": [
-                    {"title": "Bitcoin holds steady as volatility drops", "published_at": "2026-01-26"},
-                    {"title": "ETH staking demand rises ahead of upgrade rumors", "published_at": "2026-01-26"},
-                ], "error": None},
-                "ai_insight": {"source": "mock", "data": "Keep risk controlled. Scale in slowly, avoid chasing candles.", "error": None},
-                "meme": pick_meme(prefs),
-            },
+        sections = {
+            "prices": {"source": "mock", "data": {"bitcoin": {"usd": 65000}, "ethereum": {"usd": 3200}}, "error": None},
+            "news": {"source": "mock", "data": [
+                {"title": "Bitcoin holds steady as volatility drops", "published_at": str(today)},
+                {"title": "ETH staking demand rises ahead of upgrade rumors", "published_at": str(today)},
+            ], "error": None},
+            "ai_insight": {"source": "mock", "data": "Keep risk controlled. Scale in slowly, avoid chasing candles.", "error": None},
+            "meme": pick_meme(prefs),
         }
+
+        with engine.connect() as conn:
+            save_daily_dashboard(conn, user_id, today, sections)
+
+        return {"preferences": prefs, "sections": sections}
 
     assets = [a.upper() for a in prefs["crypto_assets"]]
     investor_type = prefs["investor_type"]
@@ -390,15 +441,18 @@ async def dashboard(user_id: int = Depends(get_user_id)):
                 insight["error"] = str(e)
                 insight["data"] = "AI request failed."
 
-    return {
-        "preferences": prefs,
-        "sections": {
-            "prices": prices,
-            "news": news,
-            "ai_insight": insight,
-            "meme": meme,
-        },
+    sections = {
+        "prices": prices,
+        "news": news,
+        "ai_insight": insight,
+        "meme": meme,
     }
+
+    with engine.connect() as conn:
+        save_daily_dashboard(conn, user_id, today, sections)
+
+    return {"preferences": prefs, "sections": sections}
+
 
 @app.post("/votes")
 def vote(data: VoteReq, user_id: int = Depends(get_user_id)):
@@ -406,11 +460,12 @@ def vote(data: VoteReq, user_id: int = Depends(get_user_id)):
         raise HTTPException(400, "value must be 1 or -1")
 
     q = text("""
-        INSERT INTO user_votes (user_id, section, item, value)
-        VALUES (:user_id, :section, :item, :value)
-        ON CONFLICT (user_id, section, item)
+        INSERT INTO user_votes (user_id, day, section, item, value)
+        VALUES (:user_id, CURRENT_DATE, :section, :item, :value)
+        ON CONFLICT (user_id, day, section, item)
         DO UPDATE SET value = EXCLUDED.value, created_at = now()
     """)
+
 
     with engine.connect() as conn:
         conn.execute(q, {
@@ -425,21 +480,20 @@ def vote(data: VoteReq, user_id: int = Depends(get_user_id)):
 
 @app.get("/votes")
 def get_votes(date: str = Query("today"), user_id: int = Depends(get_user_id)):
+    q = """
+        SELECT section, item, value
+        FROM user_votes
+        WHERE user_id = :user_id
+    """
+    params = {"user_id": user_id}
+
+    if date == "today":
+        q += " AND day = CURRENT_DATE"
+    else:
+        q += " AND day = :day"
+        params["day"] = date  # expects YYYY-MM-DD
+
     with engine.connect() as conn:
-        if date == "today":
-            q = text("""
-                SELECT section, item, value
-                FROM user_votes
-                WHERE user_id = :user_id
-                  AND created_at::date = CURRENT_DATE
-            """)
-            rows = conn.execute(q, {"user_id": user_id}).fetchall()
-        else:
-            q = text("""
-                SELECT section, item, value
-                FROM user_votes
-                WHERE user_id = :user_id
-            """)
-            rows = conn.execute(q, {"user_id": user_id}).fetchall()
+        rows = conn.execute(text(q), params).fetchall()
 
     return [{"section": r[0], "item": r[1], "value": r[2]} for r in rows]
