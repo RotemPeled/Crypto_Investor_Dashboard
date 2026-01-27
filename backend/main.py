@@ -252,7 +252,7 @@ async def fetch_prices(client: httpx.AsyncClient, assets: list[str]):
 
     try:
         base = coingecko_base_url()
-        params = {"ids": ",".join(ids), "vs_currencies": "usd"}
+        params = {"ids": ",".join(ids), "vs_currencies": "usd", "include_24hr_change": "true"}
         cg_key = os.getenv("COINGECKO_API_KEY")
         headers = {"x-cg-pro-api-key": cg_key} if cg_key else {}
 
@@ -515,7 +515,11 @@ async def dashboard(user_id: int = Depends(get_user_id)):
         sections = {
             "prices": {
                 "source": "mock",
-                "data": {"bitcoin": {"usd": 65000}, "ethereum": {"usd": 3200}},
+                "data": {
+                    "bitcoin": {"usd": 65000, "usd_24h_change": 1.24},
+                    "ethereum": {"usd": 3200, "usd_24h_change": -0.62},
+                },
+
                 "error": None,
             },
             "news": {
@@ -550,8 +554,9 @@ async def dashboard(user_id: int = Depends(get_user_id)):
         if asset_ids:
             r = await client.get(
                 f"{coingecko_base_url()}/simple/price",
-                params={"ids": ",".join(asset_ids), "vs_currencies": "usd"},
+                params={"ids": ",".join(asset_ids), "vs_currencies": "usd", "include_24hr_change": "true"},
             )
+
             if r.status_code == 200:
                 prices["data"] = r.json()
             else:

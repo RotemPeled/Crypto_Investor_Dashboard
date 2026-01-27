@@ -137,6 +137,11 @@ export default function Dashboard() {
 
   const s = data.sections || {};
   const prices = s.prices;
+  const pricesMetaById = (prices?.meta || []).reduce((acc, m) => {
+    acc[m.id] = m;
+    return acc;
+  }, {});
+  
   const news = s.news;
   const ai = s.ai_insight;
   const meme = s.meme;
@@ -178,14 +183,34 @@ export default function Dashboard() {
           }
         >
           <div className="pricesTable">
-            {(prices?.data ? Object.entries(prices.data) : []).map(([coin, v]) => (
-              <div key={coin} className="pricesRow">
+          {(prices?.data ? Object.entries(prices.data) : []).map(([coinId, v]) => {
+            const name = pricesMetaById[coinId]?.name || coinId;
+            const usd = Number(v?.usd ?? 0);
+            const ch = v?.usd_24h_change;
+
+            const hasChange = typeof ch === "number" && Number.isFinite(ch);
+            const up = hasChange ? ch >= 0 : true;
+
+            return (
+              <div key={coinId} className="pricesRow">
                 <div className="pricesCoin">
-                  <div className="pricesName">{coin}</div>
+                  <div className="pricesName">{name}</div>
                 </div>
-                <div className="pricesValue">${Number(v?.usd ?? 0).toLocaleString()}</div>
+
+                <div className="pricesRight">
+                  <div className="pricesValue">${usd.toLocaleString()}</div>
+
+                  {hasChange ? (
+                    <div className={`pricesDelta ${up ? "up" : "down"}`} title="Change in the last 24 hours">
+                      <span className="pricesArrow">{up ? "↑" : "↓"}</span>
+                      <span>{Math.abs(ch).toFixed(2)}%</span>
+                    </div>
+                  ) : null}
+                </div>
               </div>
-            ))}
+            );
+          })}
+
           </div>
         </Section>
 

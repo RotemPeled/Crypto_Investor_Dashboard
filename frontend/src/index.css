@@ -667,6 +667,40 @@ body.theme-night .success{
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     font-weight: 700;
   }
+  .pricesRight{
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+  }
+  
+  .pricesDelta{
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--stroke);
+    background: var(--btnBg);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  
+  .pricesDelta .pricesArrow{
+    font-size: 12px;
+    opacity: 0.9;
+  }
+  
+  .pricesDelta.up{
+    color: color-mix(in srgb, rgba(20, 120, 60, 0.90) 55%, var(--muted));
+    border-color: color-mix(in srgb, rgba(20, 120, 60, 0.35) 40%, var(--stroke));
+    background: color-mix(in srgb, rgba(20, 120, 60, 0.10) 55%, var(--btnBg));
+  }
+  
+  .pricesDelta.down{
+    color: color-mix(in srgb, rgba(210, 40, 40, 0.90) 55%, var(--muted));
+    border-color: color-mix(in srgb, rgba(210, 40, 40, 0.35) 40%, var(--stroke));
+    background: color-mix(in srgb, rgba(210, 40, 40, 0.10) 55%, var(--btnBg));
+  }
   
   .spin{
     display: inline-flex;
