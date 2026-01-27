@@ -55,24 +55,12 @@ class VoteReq(BaseModel):
     item: str 
     value: int      
 
-COINGECKO_IDS = {
-    "BTC": "bitcoin",
-    "ETH": "ethereum",
-    "SOL": "solana",
-    "XRP": "ripple",
-    "ADA": "cardano",
-    "DOGE": "dogecoin",
-    "BNB": "binancecoin",
-    "USDT": "tether",
-    "AVAX": "avalanche-2",
-}
-
 MEMES_BY_INVESTOR = {
-    "hodler": [
+    "long_term": [
         {"title": "HODL mode", "url": "https://i.imgflip.com/1bij.jpg"},
         {"title": "Diamond hands", "url": "https://i.imgflip.com/4/3si4.jpg"},
     ],
-    "day_trader": [
+    "short_term": [
         {"title": "To the moon", "url": "https://i.imgflip.com/30b1gx.jpg"},
         {"title": "1m candle PTSD", "url": "https://i.imgflip.com/1ur9b0.jpg"},
     ],
@@ -80,7 +68,14 @@ MEMES_BY_INVESTOR = {
         {"title": "JPEG investor", "url": "https://i.imgflip.com/2/1otk96.jpg"},
         {"title": "Floor price vibes", "url": "https://i.imgflip.com/26am.jpg"},
     ],
+    "swing_trader": [
+        {"title": "Zoom out", "url": "https://i.imgflip.com/4/1e7ql7.jpg"},
+    ],
+    "defi_yield": [
+        {"title": "APY hunter", "url": "https://i.imgflip.com/4/2wifvo.jpg"},
+    ],
 }
+
 
 MEMES_BY_CONTENT = {
     "fun": [
@@ -90,7 +85,7 @@ MEMES_BY_CONTENT = {
     "social": [
         {"title": "Twitter experts", "url": "https://i.imgflip.com/4/2wifvo.jpg"},
     ],
-    "market news": [
+    "market_news": [
         {"title": "Breaking news panic", "url": "https://i.imgflip.com/4/1bij.jpg"},
     ],
     "charts": [
@@ -103,6 +98,7 @@ DEFAULT_MEME_POOL = [
     {"title": "To the moon", "url": "https://i.imgflip.com/30b1gx.jpg"},
     {"title": "Buy high sell low", "url": "https://i.imgflip.com/1ur9b0.jpg"},
 ]
+
 
 def get_user_id(creds: HTTPAuthorizationCredentials = Depends(bearer)):
     token = creds.credentials
@@ -325,17 +321,10 @@ async def fetch_ai_insight(client: httpx.AsyncClient, investor_type: str, assets
         return insight
 
     # ---- sanitize inputs ----
-    investor_type_raw = (investor_type or "").strip().lower()[:32]
     assets_clean = [a.strip().lower() for a in (assets or []) if isinstance(a, str) and a.strip()]
     assets_clean = assets_clean[:12]
 
-    # normalize investor label for the prompt/output
-    investor_label = investor_type_raw.replace("_", " ")
-    if investor_label in ("short term", "shortterm"):
-        investor_label = "short-term"
-    elif investor_label in ("long term", "longterm"):
-        investor_label = "long-term"
-
+    investor_label = (investor_type or "").strip()
     # ---- Build "today" market snapshot from CoinGecko (free public API) ----
     market_trend = "unknown"
     btc_trend = "unknown"
@@ -397,7 +386,7 @@ Market snapshot today (based on 24h change of selected assets):
 
 Instructions:
 1) Write ONE daily insight grounded in today's snapshot.
-2) It MUST be relevant to a {investor_label} investor (explicitly say "short-term" or "long-term").
+2) It MUST be relevant to investor_type="{investor_label}" and MUST mention this exact value verbatim.
 3) You MAY focus on 1–2 assets only; do NOT force mentioning all assets.
 4) Ignore unknown/invalid assets and do not mention them.
 5) Be specific and practical (what to watch / risk / positioning), not generic.
@@ -446,7 +435,7 @@ Instructions:
 
             # ---- enforce investor + today grounding if model under-delivers ----
             lower = text.lower()
-            must_have_investor = ("short-term" in lower) or ("long-term" in lower)
+            must_have_investor = (investor_label or "").lower() in lower
 
             if not must_have_investor:
                 text = f"For a {investor_label} investor: {text}".strip()
@@ -554,7 +543,6 @@ def me(user_id: int = Depends(get_user_id)):
 
     return {"id": user.id, "name": user.name, "email": user.email, "needsOnboarding": (not has_pref)}
 
-# save onboarding data
 @app.post("/onboarding")
 async def save_onboarding(data: OnboardingReq, user_id: int = Depends(get_user_id)):
     q = text("""
@@ -565,6 +553,20 @@ async def save_onboarding(data: OnboardingReq, user_id: int = Depends(get_user_i
     raw_assets = data.crypto_assets or []
     resolved_ids: list[str] = []
     warnings: list[str] = []
+    
+    ALLOWED_INVESTOR_TYPES = {"long_term", "short_term", "nft_collector", "swing_trader", "defi_yield"}
+    ALLOWED_CONTENT_TYPES = {"market_news", "charts", "fun", "development", "regulation", "security", "social"}
+
+    if data.investor_type not in ALLOWED_INVESTOR_TYPES:
+        raise HTTPException(400, "Invalid investor_type")
+
+    ct = data.content_type or []
+    if not isinstance(ct, list) or any(x not in ALLOWED_CONTENT_TYPES for x in ct):
+        raise HTTPException(400, "Invalid content_type")
+
+
+    # If you still allow "Other" free-text, keep this ON.
+    ALLOW_FREE_TEXT = True
 
     async with httpx.AsyncClient(timeout=12) as client:
         for a in raw_assets:
@@ -572,25 +574,30 @@ async def save_onboarding(data: OnboardingReq, user_id: int = Depends(get_user_i
             if not s:
                 continue
 
-            sym = s.upper()
+            s_id = s.lower()
 
-            # Known symbol -> convert to ID
-            if sym in COINGECKO_IDS:
-                resolved_ids.append(COINGECKO_IDS[sym])
+            # ✅ If frontend sends CoinGecko IDs, accept them directly
+            # (basic validation: ids are usually lowercase with dashes, no spaces)
+            looks_like_id = (" " not in s_id) and all(ch.isalnum() or ch in "-_" for ch in s_id)
+
+            if looks_like_id:
+                resolved_ids.append(s_id)
                 continue
 
-            # Free text (Other) -> search
-            found = await coingecko_search_first_id(client, s)
-            if found and found.get("id"):
-                resolved_ids.append(found["id"])
+            # ✅ Only if you allow free-text (Other)
+            if ALLOW_FREE_TEXT:
+                found = await coingecko_search_first_id(client, s)
+                if found and found.get("id"):
+                    resolved_ids.append(found["id"])
+                else:
+                    warnings.append(f'Could not recognize "{s}" as a coin.')
             else:
-                warnings.append(f'Could not recognize "{s}" as a coin.')
+                warnings.append(f'Invalid coin id "{s}".')
 
     # dedupe keep order
     seen = set()
     resolved_ids = [x for x in resolved_ids if not (x in seen or seen.add(x))]
 
-    # If no valid assets -> don't save, but don't fail
     if not resolved_ids:
         return {
             "saved": False,
@@ -604,10 +611,9 @@ async def save_onboarding(data: OnboardingReq, user_id: int = Depends(get_user_i
                 "user_id": user_id,
                 "crypto_assets": json.dumps(resolved_ids),
                 "investor_type": data.investor_type,
-                "content_type": json.dumps(data.content_type)
+                "content_type": json.dumps(data.content_type),
             })
             conn.commit()
-
     except Exception:
         raise HTTPException(status_code=409, detail="Onboarding already completed")
 
