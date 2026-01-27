@@ -61,6 +61,9 @@ COINGECKO_IDS = {
     "XRP": "ripple",
     "ADA": "cardano",
     "DOGE": "dogecoin",
+    "BNB": "binancecoin",
+    "USDT": "tether",
+    "AVAX": "avalanche-2",
 }
 
 MEMES_BY_INVESTOR = {
@@ -241,10 +244,10 @@ def create_access_token(user_id: int):
 async def fetch_prices(client: httpx.AsyncClient, assets: list[str]):
     prices = {"source": "coingecko", "data": {}, "error": None}
 
-    ids = [COINGECKO_IDS.get(sym) for sym in assets]
+    ids = [str(a).strip().lower() for a in assets if str(a).strip()]
     ids = [x for x in ids if x]
     if not ids:
-        prices["error"] = "No supported assets (add mapping in COINGECKO_IDS)"
+        prices["error"] = "No assets to fetch prices for"
         return prices
 
     try:
@@ -263,6 +266,26 @@ async def fetch_prices(client: httpx.AsyncClient, assets: list[str]):
 
     return prices
 
+async def coingecko_search_first_id(client: httpx.AsyncClient, query: str):
+    base = coingecko_base_url()
+    cg_key = os.getenv("COINGECKO_API_KEY")
+    headers = {"x-cg-pro-api-key": cg_key} if cg_key else {}
+
+    r = await client.get(f"{base}/search", params={"query": query}, headers=headers)
+    if r.status_code != 200:
+        return None
+
+    coins = (r.json() or {}).get("coins") or []
+    if not coins:
+        return None
+
+    top = coins[0]
+    return {
+        "id": top.get("id"),
+        "name": top.get("name"),
+        "symbol": (top.get("symbol") or "").upper(),
+        "query": query,
+    }
 
 async def fetch_news(client: httpx.AsyncClient, prefs: dict):
     news = {"source": "cryptopanic", "data": [], "error": None}
@@ -410,29 +433,68 @@ def me(user_id: int = Depends(get_user_id)):
 
 # save onboarding data
 @app.post("/onboarding")
-def save_onboarding(data: OnboardingReq, user_id: int = Depends(get_user_id)):
+async def save_onboarding(data: OnboardingReq, user_id: int = Depends(get_user_id)):
     q = text("""
         INSERT INTO user_preferences (user_id, crypto_assets, investor_type, content_type)
         VALUES (:user_id, CAST(:crypto_assets AS jsonb), :investor_type, CAST(:content_type AS jsonb))
     """)
 
+    raw_assets = data.crypto_assets or []
+    resolved_ids: list[str] = []
+    warnings: list[str] = []
+
+    async with httpx.AsyncClient(timeout=12) as client:
+        for a in raw_assets:
+            s = str(a).strip()
+            if not s:
+                continue
+
+            sym = s.upper()
+
+            # Known symbol -> convert to ID
+            if sym in COINGECKO_IDS:
+                resolved_ids.append(COINGECKO_IDS[sym])
+                continue
+
+            # Free text (Other) -> search
+            found = await coingecko_search_first_id(client, s)
+            if found and found.get("id"):
+                resolved_ids.append(found["id"])
+            else:
+                warnings.append(f'Could not recognize "{s}" as a coin.')
+
+    # dedupe keep order
+    seen = set()
+    resolved_ids = [x for x in resolved_ids if not (x in seen or seen.add(x))]
+
+    # If no valid assets -> don't save, but don't fail
+    if not resolved_ids:
+        return {
+            "saved": False,
+            "message": "Coin not found – please try again",
+            "warnings": (warnings or ["Coin not found – please try again"]),
+        }
+
     try:
         with engine.connect() as conn:
             conn.execute(q, {
                 "user_id": user_id,
-                "crypto_assets": json.dumps(data.crypto_assets),
+                "crypto_assets": json.dumps(resolved_ids),
                 "investor_type": data.investor_type,
                 "content_type": json.dumps(data.content_type)
             })
             conn.commit()
 
     except Exception:
-        raise HTTPException(
-            status_code=409,
-            detail="Onboarding already completed"
-        )
+        raise HTTPException(status_code=409, detail="Onboarding already completed")
 
-    return {"message": "onboarding saved"}
+    return {
+        "saved": True,
+        "message": "onboarding saved",
+        "warnings": warnings,
+        "crypto_assets": resolved_ids,
+    }
+
 @app.get("/dashboard")
 async def dashboard(user_id: int = Depends(get_user_id)):
     with engine.connect() as conn:
@@ -477,13 +539,26 @@ async def dashboard(user_id: int = Depends(get_user_id)):
 
         return {"preferences": prefs, "sections": sections}
 
-    assets = [a.upper() for a in prefs["crypto_assets"]]
+    asset_ids = [str(x).strip().lower() for x in (prefs["crypto_assets"] or []) if str(x).strip()]
     investor_type = prefs["investor_type"]
 
+    coins_meta = [{"id": cid, "name": cid.replace("-", " ").title()} for cid in asset_ids]
+
     async with httpx.AsyncClient(timeout=12) as client:
-        prices = await fetch_prices(client, assets)
+        prices = {"source": "coingecko", "data": {}, "meta": coins_meta, "error": None}
+
+        if asset_ids:
+            r = await client.get(
+                f"{coingecko_base_url()}/simple/price",
+                params={"ids": ",".join(asset_ids), "vs_currencies": "usd"},
+            )
+            if r.status_code == 200:
+                prices["data"] = r.json()
+            else:
+                prices["error"] = f"CoinGecko status {r.status_code}"
+
         news = await fetch_news(client, prefs)
-        insight = await fetch_ai_insight(client, investor_type, assets)
+        insight = await fetch_ai_insight(client, investor_type, asset_ids)
 
     meme = fetch_meme(prefs)
 
@@ -520,7 +595,7 @@ async def refresh_section(
     if existing is None:
         raise HTTPException(400, "Daily dashboard not generated yet. Call GET /dashboard first.")
 
-    assets = [a.upper() for a in prefs["crypto_assets"]]
+    assets = [str(x).strip().lower() for x in (prefs["crypto_assets"] or []) if str(x).strip()]
     investor_type = prefs["investor_type"]
 
     async with httpx.AsyncClient(timeout=12) as client:

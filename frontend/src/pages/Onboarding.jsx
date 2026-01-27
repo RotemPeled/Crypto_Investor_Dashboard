@@ -29,8 +29,12 @@ export default function Onboarding() {
   const [cryptoAssets, setCryptoAssets] = useState([]);
   const [investorType, setInvestorType] = useState("");
   const [contentType, setContentType] = useState([]);
+  
+  const [otherAsset, setOtherAsset] = useState("");
+  const [useOther, setUseOther] = useState(false);
 
-  const ASSETS = ["BTC", "ETH", "SOL", "XRP", "ADA", "DOGE"];
+
+  const ASSETS = ["BTC", "ETH", "SOL", "XRP", "ADA", "DOGE", "BNB", "USDT", "AVAX"];
   const TYPES = ["long_term", "short_term", "day_trader"];
   const CONTENT = ["news", "prices", "ai_insight", "meme"];
 
@@ -39,8 +43,9 @@ export default function Onboarding() {
   }
 
   const isValid = useMemo(() => {
-    return cryptoAssets.length > 0 && investorType && contentType.length > 0;
-  }, [cryptoAssets, investorType, contentType]);
+    const hasAsset = cryptoAssets.length > 0 || (useOther && otherAsset.trim());
+    return hasAsset && investorType && contentType.length > 0;
+  }, [cryptoAssets, investorType, contentType, useOther, otherAsset]);  
 
   async function onSubmit(e) {
     e.preventDefault();
@@ -54,14 +59,32 @@ export default function Onboarding() {
 
     try {
       setSaving(true);
-      await api.post(ENDPOINTS.onboarding, {
-        crypto_assets: cryptoAssets,
+      const finalAssets = [...cryptoAssets];
+      if (useOther && otherAsset.trim()) {
+        finalAssets.push(otherAsset.trim());
+      }
+
+      const res = await api.post(ENDPOINTS.onboarding, {
+        crypto_assets: finalAssets,
         investor_type: investorType,
         content_type: contentType,
       });
-
-      push("Saved! Your choices will personalize the dashboard.", "success", 3000);
+      
+      const warnings = res?.data?.warnings || [];
+      const saved = !!res?.data?.saved;
+      
+      warnings.forEach((w) => push(w, "info", 3500));
+      
+      if (!saved) {
+        const msg = res?.data?.message || "Please choose at least one valid coin.";
+        setErr(msg);
+        push(msg, "error", 3500);
+        return; // stay on onboarding
+      }
+      
+      push("Saved! Your choices will personalize the dashboard.", "success", 2500);
       setTimeout(() => nav("/dashboard"), 700);
+      
     } catch (e2) {
       const msg = e2?.response?.data?.detail || "Failed to save onboarding";
       setErr(msg);
@@ -87,7 +110,41 @@ export default function Onboarding() {
                   {a}
                 </Pill>
               ))}
+
+              {/* Other becomes a “pill” with an input inside */}
+              <button
+                type="button"
+                className={`pill ${useOther ? "pillActive" : ""}`}
+                onClick={() => {
+                  setUseOther((p) => {
+                    const next = !p;
+                    if (!next) setOtherAsset(""); 
+                    return next;
+                  });
+                }}
+                
+                style={{ display: "inline-flex", alignItems: "center", gap: 8 }}
+              >
+                {useOther ? <span className="pillCheck">✓</span> : null}
+                <span>Other:</span>
+                <input
+                  value={otherAsset}
+                  onChange={(e) => {
+                    setOtherAsset(e.target.value);
+                    if (!useOther) setUseOther(true);
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                  placeholder="e.g. Toncoin / TON"
+                  className="input"
+                  style={{
+                    width: 150,
+                    padding: "6px 10px",
+                    borderRadius: 999,
+                  }}
+                />
+              </button>
             </div>
+
             <div className="hint">Pick at least 1.</div>
           </div>
         </div>
