@@ -13,6 +13,7 @@ import random
 import httpx
 from fastapi.middleware.cors import CORSMiddleware
 from db import init_db, engine
+from pathlib import Path
 
 load_dotenv()
 app = FastAPI()
@@ -20,9 +21,12 @@ app = FastAPI()
 @app.on_event("startup")
 def on_startup():
     init_db()
+    load_meme_catalog()
     
 bearer = HTTPBearer()
 DEV_MODE = os.getenv("DEV_MODE", "false").lower() == "true"
+MEMES_FILE = os.getenv("MEMES_FILE", str(Path(__file__).with_name("memes.json")))
+MEME_CATALOG = []
 
 def _parse_origins():
     raw = os.getenv("ALLOW_ORIGINS", "http://localhost:5173")
@@ -55,50 +59,15 @@ class VoteReq(BaseModel):
     item: str 
     value: int      
 
-MEMES_BY_INVESTOR = {
-    "long_term": [
-        {"title": "HODL mode", "url": "https://i.imgflip.com/1bij.jpg"},
-        {"title": "Diamond hands", "url": "https://i.imgflip.com/4/3si4.jpg"},
-    ],
-    "short_term": [
-        {"title": "To the moon", "url": "https://i.imgflip.com/30b1gx.jpg"},
-        {"title": "1m candle PTSD", "url": "https://i.imgflip.com/1ur9b0.jpg"},
-    ],
-    "nft_collector": [
-        {"title": "JPEG investor", "url": "https://i.imgflip.com/2/1otk96.jpg"},
-        {"title": "Floor price vibes", "url": "https://i.imgflip.com/26am.jpg"},
-    ],
-    "swing_trader": [
-        {"title": "Zoom out", "url": "https://i.imgflip.com/4/1e7ql7.jpg"},
-    ],
-    "defi_yield": [
-        {"title": "APY hunter", "url": "https://i.imgflip.com/4/2wifvo.jpg"},
-    ],
-}
-
-
-MEMES_BY_CONTENT = {
-    "fun": [
-        {"title": "Buy high sell low", "url": "https://i.imgflip.com/1ur9b0.jpg"},
-        {"title": "Crypto mood", "url": "https://i.imgflip.com/4/1g8my4.jpg"},
-    ],
-    "social": [
-        {"title": "Twitter experts", "url": "https://i.imgflip.com/4/2wifvo.jpg"},
-    ],
-    "market_news": [
-        {"title": "Breaking news panic", "url": "https://i.imgflip.com/4/1bij.jpg"},
-    ],
-    "charts": [
-        {"title": "Staring at charts", "url": "https://i.imgflip.com/4/1e7ql7.jpg"},
-    ],
-}
-
-DEFAULT_MEME_POOL = [
-    {"title": "HODL mode", "url": "https://i.imgflip.com/1bij.jpg"},
-    {"title": "To the moon", "url": "https://i.imgflip.com/30b1gx.jpg"},
-    {"title": "Buy high sell low", "url": "https://i.imgflip.com/1ur9b0.jpg"},
-]
-
+def load_meme_catalog():
+    global MEME_CATALOG
+    try:
+        p = Path(MEMES_FILE)
+        data = json.loads(p.read_text(encoding="utf-8"))
+        MEME_CATALOG = data.get("memes", []) or []
+    except Exception as e:
+        print("Failed to load memes.json:", e)
+        MEME_CATALOG = []
 
 def get_user_id(creds: HTTPAuthorizationCredentials = Depends(bearer)):
     token = creds.credentials
@@ -202,25 +171,65 @@ def update_daily_section(conn, user_id: int, day: date, section_key: str, sectio
     conn.commit()
 
 
-def pick_meme(prefs: dict):
-    investor_type = (prefs.get("investor_type") or "").lower()
-    content = prefs.get("content_type") or []  # אמור להיות list (JSON)
+def pick_meme(prefs: dict, exclude_ids_or_urls: set[str] | None = None):
+    exclude_ids_or_urls = exclude_ids_or_urls or set()
 
-    content_set = set([str(x).lower() for x in (content if isinstance(content, list) else [content])])
+    investor_type = (prefs.get("investor_type") or "").strip().lower()
+    content = prefs.get("content_type") or []
+    assets = prefs.get("crypto_assets") or []
 
-    pool = []
+    content_set = set(str(x).lower() for x in (content if isinstance(content, list) else [content]))
+    assets_set = set(str(x).lower() for x in (assets if isinstance(assets, list) else [assets]))
 
-    if investor_type in MEMES_BY_INVESTOR:
-        pool += MEMES_BY_INVESTOR[investor_type]
+    candidates = []
+    for m in (MEME_CATALOG or []):
+        mid = str(m.get("id") or "")
+        url = str(m.get("url") or "")
+        if not url:
+            continue
+        if mid in exclude_ids_or_urls or url in exclude_ids_or_urls:
+            continue
 
-    for k, arr in MEMES_BY_CONTENT.items():
-        if k in content_set:
-            pool += arr
+        tags = (m.get("tags") or {})
+        inv_tags = set(x.lower() for x in (tags.get("investor") or []))
+        con_tags = set(x.lower() for x in (tags.get("content") or []))
+        ast_tags = set(x.lower() for x in (tags.get("assets") or []))
 
-    if not pool:
-        pool = DEFAULT_MEME_POOL
+        score = 0
+        if investor_type and investor_type in inv_tags:
+            score += 4
 
-    return random.choice(pool)
+        score += 2 * len(content_set.intersection(con_tags))
+
+        # asset matches – תורם קצת (לא להשתלט)
+        score += min(3, len(assets_set.intersection(ast_tags)))  # cap 3
+
+        candidates.append((score, m))
+
+    if not candidates:
+        # fallback אם אין קטלוג/אין התאמות
+        pool = MEME_CATALOG or [
+            {"id": "fallback_hodl", "title": "HODL mode", "url": "https://i.imgflip.com/1bij.jpg"},
+            {"id": "fallback_moon", "title": "To the moon", "url": "https://i.imgflip.com/30b1gx.jpg"},
+            {"id": "fallback_bhsl", "title": "Buy high sell low", "url": "https://i.imgflip.com/1ur9b0.jpg"},
+        ]
+        chosen = random.choice(pool)
+        chosen["reason"] = {"mode": "fallback"}
+        return chosen
+
+    # Weighted random: כל meme מקבל weight = score+1
+    weights = [(max(0, s) + 1) for (s, _) in candidates]
+    chosen = random.choices([m for (_, m) in candidates], weights=weights, k=1)[0]
+
+    # (אופציונלי) להחזיר גם "reason" לדיבוג
+    chosen = dict(chosen)
+    chosen["reason"] = {
+        "investor_type": investor_type,
+        "content": sorted(list(content_set)),
+        "assets_sample": sorted(list(assets_set))[:5]
+    }
+    return chosen
+
 
 def coingecko_base_url():
     mode = os.getenv("COINGECKO_MODE", "demo").lower()
@@ -263,6 +272,45 @@ async def fetch_prices(client: httpx.AsyncClient, assets: list[str]):
 
     return prices
 
+async def fetch_price_chart(client: httpx.AsyncClient, assets: list[str], days: int = 7):
+    chart = {
+        "source": "coingecko",
+        "range": f"{days}d",
+        "data": {},
+        "error": None,
+    }
+
+    if not assets:
+        chart["error"] = "No assets for chart"
+        return chart
+
+    base = coingecko_base_url()
+    cg_key = os.getenv("COINGECKO_API_KEY")
+    headers = {"x-cg-pro-api-key": cg_key} if cg_key else {}
+
+    try:
+        for asset in assets:
+            r = await client.get(
+                f"{base}/coins/{asset}/market_chart",
+                params={"vs_currency": "usd", "days": days},
+                headers=headers,
+                timeout=15.0,
+            )
+
+            if r.status_code != 200:
+                chart["error"] = f"CoinGecko error for {asset}"
+                continue
+
+            j = r.json() or {}
+            # prices = [[timestamp, price], ...]
+            chart["data"][asset] = j.get("prices", [])
+
+    except Exception as e:
+        chart["error"] = str(e)
+
+    return chart
+
+
 async def coingecko_search_first_id(client: httpx.AsyncClient, query: str):
     base = coingecko_base_url()
     cg_key = os.getenv("COINGECKO_API_KEY")
@@ -284,7 +332,7 @@ async def coingecko_search_first_id(client: httpx.AsyncClient, query: str):
         "query": query,
     }
 
-async def fetch_news(client: httpx.AsyncClient, prefs: dict):
+async def fetch_news(client: httpx.AsyncClient, prefs: dict, limit: int = 5):
     news = {"source": "cryptopanic", "data": [], "error": None}
     token = os.getenv("CRYPTOPANIC_TOKEN")
 
@@ -299,10 +347,34 @@ async def fetch_news(client: httpx.AsyncClient, prefs: dict):
             params={"auth_token": token, "public": "true"},
         )
         if rn.status_code == 200:
+            
             data = rn.json().get("results") or []
+            assets = set((prefs.get("crypto_assets") or []))
+            content_types = set((prefs.get("content_type") or []))
+            scored = []
+            for item in data:
+                title = (item.get("title") or "").lower()
+                score = 0
+
+                for a in assets:
+                    if a.lower() in title:
+                        score += 3
+
+                if "regulation" in content_types and any(x in title for x in ["sec", "law", "court", "regulation"]):
+                    score += 2
+                if "security" in content_types and any(x in title for x in ["hack", "exploit", "breach"]):
+                    score += 2
+                if "market_news" in content_types and any(x in title for x in ["price", "market", "surge", "drop"]):
+                    score += 1
+                if "social" in content_types and any(x in title for x in ["twitter", "elon", "sentiment"]):
+                    score += 1
+
+                scored.append((score, item))
+
+            scored.sort(key=lambda x: x[0], reverse=True)
             news["data"] = [
-                {"title": item.get("title"), "published_at": item.get("published_at")}
-                for item in data[:10]
+                {"title": i.get("title"), "published_at": i.get("published_at")}
+                for (_, i) in scored[:limit]
             ]
         else:
             news["error"] = f"CryptoPanic status {rn.status_code}"
@@ -465,6 +537,28 @@ Instructions:
 
 def fetch_meme(prefs: dict):
     return pick_meme(prefs)
+
+def generate_fun_section(prefs: dict):
+    moods = [
+        "Market mood: cautious optimism.",
+        "Market mood: leverage is creeping back.",
+        "Market mood: waiting for confirmation.",
+        "Market mood: everyone thinks they're early.",
+        "Market mood: low conviction, high noise.",
+    ]
+
+    facts = [
+        "Most traders lose money not on bad entries – but bad exits.",
+        "High volatility days statistically favor patient traders.",
+        "Big moves often start when sentiment is most divided.",
+        "Sideways markets cause more losses than crashes.",
+    ]
+
+    return {
+        "type": "fun",
+        "variant": "daily_fun",
+        "text": random.choice(moods + facts),
+    }
 
 # saving new user in DB
 @app.post("/auth/signup")
@@ -666,6 +760,35 @@ async def dashboard(user_id: int = Depends(get_user_id)):
             },
             "meme": fetch_meme(prefs),
         }
+        if "charts" in prefs.get("content_type", []):
+            now = int(datetime.utcnow().timestamp() * 1000)
+            day = 24 * 60 * 60 * 1000
+
+            # אם המשתמש בחר מטבעות – נשתמש בהם, אחרת דיפולט
+            ids = (prefs.get("crypto_assets") or ["bitcoin", "ethereum"])[:4]
+
+            data = {}
+            base = 100.0
+            for i, cid in enumerate(ids):
+                series = []
+                v = base + i * 25
+                for k in range(7):
+                    # קצת רעש כדי שיראו קו
+                    v = v * (1 + (random.random() - 0.5) * 0.02)
+                    series.append([now - (6 - k) * day, round(v, 2)])
+                data[cid] = series
+
+            sections["chart"] = {
+                "source": "mock",
+                "range": "7d",
+                "data": data,
+                "error": None
+        }
+
+
+        if "fun" in prefs.get("content_type", []):
+            sections["fun"] = generate_fun_section(prefs)
+
 
         with engine.connect() as conn:
             save_daily_dashboard(conn, user_id, today, sections)
@@ -691,17 +814,40 @@ async def dashboard(user_id: int = Depends(get_user_id)):
             else:
                 prices["error"] = f"CoinGecko status {r.status_code}"
 
-        news = await fetch_news(client, prefs)
+        content_types = set(prefs.get("content_type", []))
+
+        include_charts = "charts" in content_types
+        include_fun = "fun" in content_types
+
+        news_limit = 5
+        if include_charts:
+            news_limit -= 1
+        if include_fun:
+            news_limit -= 1
+
+        news = await fetch_news(client, prefs, limit=news_limit)
         insight = await fetch_ai_insight(client, investor_type, asset_ids)
+        chart = None
+        if include_charts:
+            chart = await fetch_price_chart(client, asset_ids, days=7)
+
+        fun = None
+        if include_fun:
+            fun = generate_fun_section(prefs)
 
     meme = fetch_meme(prefs)
 
     sections = {
-        "prices": prices,
-        "news": news,
-        "ai_insight": insight,
-        "meme": meme,
+    "prices": prices,
+    "news": news,
+    "ai_insight": insight,
+    "meme": meme,
     }
+    if chart:
+        sections["chart"] = chart
+    if fun:
+        sections["fun"] = fun
+
 
     with engine.connect() as conn:
         save_daily_dashboard(conn, user_id, today, sections)
@@ -713,7 +859,8 @@ async def refresh_section(
     section: str,
     user_id: int = Depends(get_user_id)
 ):
-    allowed = {"prices", "news", "ai_insight", "meme"}
+    allowed = {"prices", "news", "ai_insight", "meme", "chart", "fun"}
+
     if section not in allowed:
         raise HTTPException(400, "Invalid section")
 
@@ -736,11 +883,32 @@ async def refresh_section(
         if section == "prices":
             new_value = await fetch_prices(client, assets)
         elif section == "news":
-            new_value = await fetch_news(client, prefs)
+            content_types = set(prefs.get("content_type", []))
+            include_charts = "charts" in content_types
+            include_fun = "fun" in content_types
+
+            news_limit = 5
+            if include_charts:
+                news_limit -= 1
+            if include_fun:
+                news_limit -= 1
+
+            new_value = await fetch_news(client, prefs, limit=news_limit)
         elif section == "ai_insight":
             new_value = await fetch_ai_insight(client, investor_type, assets)
         elif section == "meme":
-            new_value = fetch_meme(prefs)
+            current = (existing or {}).get("meme") or {}
+            exclude = set()
+            if isinstance(current, dict):
+                if current.get("id"): exclude.add(str(current["id"]))
+                if current.get("url"): exclude.add(str(current["url"]))
+            new_value = pick_meme(prefs, exclude_ids_or_urls=exclude)
+        elif section == "chart":
+            new_value = await fetch_price_chart(client, assets, days=7)
+        elif section == "fun":
+            new_value = generate_fun_section(prefs)
+
+
 
     with engine.connect() as conn:
         update_daily_section(conn, user_id, today, section, new_value)

@@ -9,6 +9,79 @@ import Section from "../ui/Section";
 import { VoteBar, RefreshIconButton } from "../ui/IconActions";
 import { useToast } from "../ui/ToastProvider";
 
+function MiniLineChart({ chart }) {
+  // chart expected: { data: { coinId: [[ts, price], ...] }, range, source }
+  const seriesEntries = Object.entries(chart?.data || {});
+  if (!seriesEntries.length) return null;
+
+  // Use the first coin as X baseline length
+  const base = seriesEntries[0][1] || [];
+  if (base.length < 2) return null;
+
+  const W = 640;
+  const H = 160;
+  const PAD = 12;
+
+  // Build a unified min/max across all series
+  let minP = Infinity, maxP = -Infinity;
+  for (const [, arr] of seriesEntries) {
+    for (const p of arr || []) {
+      const price = Number(p?.[1]);
+      if (!Number.isFinite(price)) continue;
+      if (price < minP) minP = price;
+      if (price > maxP) maxP = price;
+    }
+  }
+  if (!Number.isFinite(minP) || !Number.isFinite(maxP) || minP === maxP) {
+    return null;
+  }
+
+  const toX = (i, n) => PAD + (i * (W - PAD * 2)) / (n - 1);
+  const toY = (price) => {
+    const t = (price - minP) / (maxP - minP);
+    return H - PAD - t * (H - PAD * 2);
+  };
+
+  const buildPath = (arr) => {
+    const n = arr.length;
+    let d = "";
+    for (let i = 0; i < n; i++) {
+      const price = Number(arr[i]?.[1]);
+      if (!Number.isFinite(price)) continue;
+      const x = toX(i, n);
+      const y = toY(price);
+      d += (d ? " L " : "M ") + `${x} ${y}`;
+    }
+    return d;
+  };
+
+  return (
+    <div className="chartBox">
+      <div className="chartTop">
+      </div>
+
+      <svg viewBox={`0 0 ${W} ${H}`} className="chartSvg" role="img" aria-label="Price chart">
+        {/* grid line */}
+        <line x1={PAD} y1={H / 2} x2={W - PAD} y2={H / 2} className="chartGrid" />
+
+        {seriesEntries.map(([coinId, arr], idx) => (
+          <path key={coinId} d={buildPath(arr || [])} className={`chartLine line${idx % 5}`} />
+        ))}
+      </svg>
+      
+      <div className="chartLegend">
+        {seriesEntries.map(([coinId], idx) => (
+          <div key={coinId} className="legendItem">
+            <span className={`legendSwatch line${idx % 5}`} />
+            <span className="legendLabel">{coinId}</span>
+          </div>
+        ))}
+      </div>
+
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const nav = useNavigate();
   const { logout } = useAuth();
@@ -145,6 +218,9 @@ export default function Dashboard() {
   const news = s.news;
   const ai = s.ai_insight;
   const meme = s.meme;
+  const chart = s.chart;
+  const fun = s.fun;
+
 
   return (
     <Shell
@@ -250,6 +326,39 @@ export default function Dashboard() {
           }
         >
           <div className="newsList">
+            {chart ? (
+              <div className="tile">
+                <div className="tileHeader">
+                  <div className="tileTitle">Past 7 Days Prices</div>
+
+                  <VoteBar
+                    selected={votes["chart::price_chart"] || 0}
+                    disabled={!!voteBusy["chart::price_chart"]}
+                    onUp={() => vote("chart", "price_chart", 1)}
+                    onDown={() => vote("chart", "price_chart", -1)}
+                  />
+                </div>
+      
+                <MiniLineChart chart={chart} />
+              </div>
+            ) : null}
+            {fun ? (
+              <div className="tile">
+                <div className="tileHeader">
+                  <div className="tileTitle">Fun Joke</div>
+
+                  <VoteBar
+                    selected={votes["fun::daily_fun"] || 0}
+                    disabled={!!voteBusy["fun::daily_fun"]}
+                    onUp={() => vote("fun", "daily_fun", 1)}
+                    onDown={() => vote("fun", "daily_fun", -1)}
+                  />
+                </div>
+
+                <div className="funText">{fun.text}</div>
+              </div>
+            ) : null}
+
             {(news?.data || []).slice(0, 6).map((n, idx) => {
               const itemKey = n.title || String(idx);
               const k = `news::${itemKey}`;
@@ -271,7 +380,6 @@ export default function Dashboard() {
             })}
           </div>
         </Section>
-
         <Section
           title="Meme"
           headerRight={

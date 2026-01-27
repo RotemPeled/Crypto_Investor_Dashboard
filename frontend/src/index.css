@@ -714,3 +714,51 @@ body.theme-night .success{
     to   { transform: rotate(360deg); }
   }
   
+
+  .newsSubBlock { margin-bottom: 12px; }
+.newsSubHeader { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+.newsSubTitle { font-weight: 600; }
+
+.chartTop { display:flex; justify-content:space-between; align-items:baseline; margin-bottom: 6px; }
+.chartTitle { font-weight: 700; }
+.chartMeta { opacity: 0.7; font-size: 12px; }
+
+.chartGrid { stroke: rgba(255,255,255,0.1); stroke-width: 1; }
+.chartLine { fill: none; stroke-width: 2; stroke: currentColor; opacity: 0.9; }
+
+.chartPill { font-size: 12px; opacity: 0.85; padding: 4px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.1); }
+
+.tileTitleRow { display:flex; justify-content:space-between; align-items:center; gap: 12px; }
+
+.chartBox { margin-top: 8px; }
+.chartSvg { width: 100%; height: 170px; display:block; }
+
+.chartLegend { margin-top: 10px; display:flex; gap: 14px; flex-wrap: wrap; align-items:center; }
+.legendItem { display:flex; align-items:center; gap: 8px; }
+.legendSwatch { width: 10px; height: 10px; border-radius: 3px; display:inline-block; }
+.legendLabel { font-size: 13px; opacity: 0.85; }
+
+.chartAxis { margin-top: 6px; display:flex; justify-content:space-between; font-size: 12px; opacity: 0.65; }
+
+.line0 { color: #9ad0ff; background: #9ad0ff; }
+.line1 { color: #b6f2c2; background: #b6f2c2; }
+.line2 { color: #ffd28f; background: #ffd28f; }
+.line3 { color: #f5a9c2; background: #f5a9c2; }
+.line4 { color: #d0b4ff; background: #d0b4ff; }
+
+.tileHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tileHeader .tileTitle {
+  flex: 1;
+  min-width: 0;
+}
+
+.tileHeader .voteBar {
+  flex: 0 0 auto;
+  margin-left: auto;
+}

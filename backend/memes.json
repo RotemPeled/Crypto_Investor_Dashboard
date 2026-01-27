@@ -1,0 +1,226 @@
+{
+    "memes": [
+      {
+        "id": "btc_hodl_volatility",
+        "title": "BTC volatility test",
+        "url": "https://i.imgflip.com/26am.jpg",
+        "tags": {
+          "investor": ["long_term"],
+          "content": ["market_news", "fun"],
+          "assets": ["bitcoin"]
+        }
+      },
+      {
+        "id": "btc_dca_brain",
+        "title": "DCA brain",
+        "url": "https://i.imgflip.com/1jwhww.jpg",
+        "tags": {
+          "investor": ["long_term"],
+          "content": ["market_news"],
+          "assets": ["bitcoin", "ethereum"]
+        }
+      },
+      {
+        "id": "eth_gas_fees",
+        "title": "ETH gas moment",
+        "url": "https://i.imgflip.com/26am.jpg",
+        "tags": {
+          "investor": [],
+          "content": ["development", "fun"],
+          "assets": ["ethereum"]
+        }
+      },
+      {
+        "id": "solana_downtime",
+        "title": "SOL uptime",
+        "url": "https://i.imgflip.com/26am.jpg",
+        "tags": {
+          "investor": [],
+          "content": ["development", "market_news", "fun"],
+          "assets": ["solana"]
+        }
+      },
+      {
+        "id": "xrp_court_case",
+        "title": "XRP & regulation",
+        "url": "https://i.imgflip.com/24y43o.jpg",
+        "tags": {
+          "investor": [],
+          "content": ["regulation", "market_news"],
+          "assets": ["ripple"]
+        }
+      },
+      {
+        "id": "ada_soon_tm",
+        "title": "ADA soon™",
+        "url": "https://i.imgflip.com/26jxvz.jpg",
+        "tags": {
+          "investor": [],
+          "content": ["development", "fun"],
+          "assets": ["cardano"]
+        }
+      },
+      {
+        "id": "doge_tweet_effect",
+        "title": "DOGE tweet",
+        "url": "https://i.imgflip.com/1ur9b0.jpg",
+        "tags": {
+          "investor": [],
+          "content": ["social", "market_news", "fun"],
+          "assets": ["dogecoin"]
+        }
+      },
+      {
+        "id": "bnb_cex_trust",
+        "title": "CEX trust",
+        "url": "https://i.imgflip.com/2gnnjh.jpg",
+        "tags": {
+          "investor": [],
+          "content": ["security"],
+          "assets": ["binancecoin"]
+        }
+      },
+      {
+        "id": "usdt_stablecoin_fear",
+        "title": "Stablecoin anxiety",
+        "url": "https://i.imgflip.com/26am.jpg",
+        "tags": {
+          "investor": [],
+          "content": ["regulation", "security"],
+          "assets": ["tether"]
+        }
+      },
+      {
+        "id": "avax_subnets",
+        "title": "AVAX tech guy",
+        "url": "https://i.imgflip.com/1jwhww.jpg",
+        "tags": {
+          "investor": [],
+          "content": ["development"],
+          "assets": ["avalanche-2"]
+        }
+      },
+      {
+        "id": "link_oracle_truth",
+        "title": "LINK oracle",
+        "url": "https://i.imgflip.com/2wifvo.jpg",
+        "tags": {
+          "investor": [],
+          "content": ["development", "market_news"],
+          "assets": ["chainlink"]
+        }
+      },
+      {
+        "id": "dot_parachains_wait",
+        "title": "DOT ecosystem",
+        "url": "https://i.imgflip.com/26jxvz.jpg",
+        "tags": {
+          "investor": [],
+          "content": ["development"],
+          "assets": ["polkadot"]
+        }
+      },
+      {
+        "id": "ton_social_hype",
+        "title": "TON hype",
+        "url": "https://i.imgflip.com/gtj5t.jpg",
+        "tags": {
+          "investor": [],
+          "content": ["social", "market_news"],
+          "assets": ["toncoin"]
+        }
+      },
+  
+      {
+        "id": "daytrader_1m_chart",
+        "title": "1m chart life",
+        "url": "https://i.imgflip.com/1e7ql7.jpg",
+        "tags": {
+          "investor": ["short_term"],
+          "content": ["charts", "fun"],
+          "assets": []
+        }
+      },
+      {
+        "id": "daytrader_long_short",
+        "title": "Long or short",
+        "url": "https://i.imgflip.com/1g8my4.jpg",
+        "tags": {
+          "investor": ["short_term"],
+          "content": ["charts", "market_news"],
+          "assets": []
+        }
+      },
+      {
+        "id": "swing_trader_tp_hit",
+        "title": "TP hit",
+        "url": "https://i.imgflip.com/1bhk.jpg",
+        "tags": {
+          "investor": ["swing_trader"],
+          "content": ["charts", "fun"],
+          "assets": []
+        }
+      },
+      {
+        "id": "swing_trader_drawdown",
+        "title": "Drawdown face",
+        "url": "https://i.imgflip.com/2gnnjh.jpg",
+        "tags": {
+          "investor": ["swing_trader"],
+          "content": ["market_news", "fun"],
+          "assets": []
+        }
+      },
+      {
+        "id": "nft_floor_watching",
+        "title": "Watching floor",
+        "url": "https://i.imgflip.com/1ur9b0.jpg",
+        "tags": {
+          "investor": ["nft_collector"],
+          "content": ["social", "fun"],
+          "assets": ["ethereum", "solana"]
+        }
+      },
+      {
+        "id": "nft_gas_pain",
+        "title": "Mint gas pain",
+        "url": "https://i.imgflip.com/26am.jpg",
+        "tags": {
+          "investor": ["nft_collector"],
+          "content": ["development", "fun"],
+          "assets": ["ethereum"]
+        }
+      },
+      {
+        "id": "defi_apy_vs_risk",
+        "title": "APY vs risk",
+        "url": "https://i.imgflip.com/1g8my4.jpg",
+        "tags": {
+          "investor": ["defi_yield"],
+          "content": ["security", "fun"],
+          "assets": []
+        }
+      },
+      {
+        "id": "defi_rug_memory",
+        "title": "Rug PTSD",
+        "url": "https://i.imgflip.com/26jxvz.jpg",
+        "tags": {
+          "investor": ["defi_yield"],
+          "content": ["security", "fun"],
+          "assets": []
+        }
+      },
+      {
+        "id": "crypto_general_buy_high",
+        "title": "Buy high sell low",
+        "url": "https://i.imgflip.com/1ur9b0.jpg",
+        "tags": {
+          "investor": [],
+          "content": ["fun"],
+          "assets": []
+        }
+      }
+    ]
+  }
+  
