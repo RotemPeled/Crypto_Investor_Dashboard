@@ -1,4 +1,5 @@
 import os
+import re
 import jwt
 from datetime import datetime, timedelta, date
 from fastapi import FastAPI, HTTPException, Depends, Query
@@ -296,7 +297,6 @@ async def fetch_news(client: httpx.AsyncClient, prefs: dict):
         news["data"] = [{"title": "No CryptoPanic token configured", "published_at": None}]
         return news
 
-    # כרגע נשאיר כמו שיש לך (10 ראשונים). אחרי זה נשפר ל-3–5 רלוונטיים.
     try:
         rn = await client.get(
             "https://cryptopanic.com/api/developer/v2/posts/",
@@ -315,7 +315,6 @@ async def fetch_news(client: httpx.AsyncClient, prefs: dict):
 
     return news
 
-
 async def fetch_ai_insight(client: httpx.AsyncClient, investor_type: str, assets: list[str]):
     insight = {"source": "openrouter", "data": None, "error": None}
     key = os.getenv("OPENROUTER_API_KEY")
@@ -325,31 +324,155 @@ async def fetch_ai_insight(client: httpx.AsyncClient, investor_type: str, assets
         insight["data"] = "No AI key configured yet."
         return insight
 
+    # ---- sanitize inputs ----
+    investor_type_raw = (investor_type or "").strip().lower()[:32]
+    assets_clean = [a.strip().lower() for a in (assets or []) if isinstance(a, str) and a.strip()]
+    assets_clean = assets_clean[:12]
+
+    # normalize investor label for the prompt/output
+    investor_label = investor_type_raw.replace("_", " ")
+    if investor_label in ("short term", "shortterm"):
+        investor_label = "short-term"
+    elif investor_label in ("long term", "longterm"):
+        investor_label = "long-term"
+
+    # ---- Build "today" market snapshot from CoinGecko (free public API) ----
+    market_trend = "unknown"
+    btc_trend = "unknown"
+    volatility = "unknown"
+    today_str = datetime.utcnow().strftime("%Y-%m-%d")
+
     try:
-        prompt = (
-            f"Give ONE short crypto insight for a {investor_type}. "
-            f"Assets: {assets}. Keep under 40 words."
-        )
-        ai = await client.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json={
-                "model": "openai/gpt-3.5-turbo",
-                "messages": [{"role": "user", "content": prompt}],
-            },
-        )
-        if ai.status_code == 200:
+        if assets_clean:
+            base = coingecko_base_url()
+            cg_key = os.getenv("COINGECKO_API_KEY")
+            headers = {"x-cg-pro-api-key": cg_key} if cg_key else {}
+
+            r = await client.get(
+                f"{base}/simple/price",
+                params={
+                    "ids": ",".join(assets_clean),
+                    "vs_currencies": "usd",
+                    "include_24hr_change": "true",
+                },
+                headers=headers,
+                timeout=15.0,
+            )
+
+            if r.status_code == 200:
+                data = r.json() or {}
+                changes = []
+
+                for a in assets_clean:
+                    ch = (data.get(a) or {}).get("usd_24h_change")
+                    if isinstance(ch, (int, float)):
+                        changes.append(float(ch))
+
+                if changes:
+                    avg = sum(changes) / len(changes)
+                    avg_abs = sum(abs(x) for x in changes) / len(changes)
+
+                    market_trend = "bullish" if avg > 0.6 else ("bearish" if avg < -0.6 else "sideways")
+                    volatility = "high" if avg_abs >= 6 else ("medium" if avg_abs >= 2.5 else "low")
+
+                btc_ch = (data.get("bitcoin") or {}).get("usd_24h_change")
+                if isinstance(btc_ch, (int, float)):
+                    btc_trend = "up" if btc_ch > 0.6 else ("down" if btc_ch < -0.6 else "flat")
+    except Exception:
+        # Snapshot can remain unknown; we still allow AI to answer.
+        pass
+
+    # ---- prompt ----
+    prompt = f"""
+You are a crypto market analyst.
+
+Today (UTC date): {today_str}
+Investor type: {investor_label}
+User interest assets: {assets_clean}
+
+Market snapshot today (based on 24h change of selected assets):
+- Overall market trend: {market_trend}
+- Bitcoin direction: {btc_trend}
+- Volatility level: {volatility}
+
+Instructions:
+1) Write ONE daily insight grounded in today's snapshot.
+2) It MUST be relevant to a {investor_label} investor (explicitly say "short-term" or "long-term").
+3) You MAY focus on 1–2 assets only; do NOT force mentioning all assets.
+4) Ignore unknown/invalid assets and do not mention them.
+5) Be specific and practical (what to watch / risk / positioning), not generic.
+6) No placeholders. No price targets. No guarantees.
+7) Max 40 words. Single paragraph only.
+""".strip()
+
+    # ---- OpenRouter free models fallback list ----
+    FREE_MODELS = [
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "mistralai/mistral-7b-instruct:free",
+        "google/gemma-2-9b-it:free",
+    ]
+
+    try:
+        for model in FREE_MODELS:
+            ai = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": "Be concise, grounded, and practical."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": 0.5,
+                    "max_tokens": 160,
+                },
+                timeout=25.0,
+            )
+
+            if ai.status_code != 200:
+                print("OpenRouter non-200:", ai.status_code, "model:", model)
+                continue
+
             j = ai.json()
-            insight["data"] = j["choices"][0]["message"]["content"]
-        else:
-            insight["error"] = f"OpenRouter status {ai.status_code}"
-            insight["data"] = "AI key configured but request failed."
+            text = (j.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+            text = re.sub(r"\s+", " ", text).strip()
+
+            print("AI model used:", model)
+            print("AI Insight raw response:", repr(text))
+
+            # If empty, try next free model
+            if not text:
+                continue
+
+            # ---- enforce investor + today grounding if model under-delivers ----
+            lower = text.lower()
+            must_have_investor = ("short-term" in lower) or ("long-term" in lower)
+
+            if not must_have_investor:
+                text = f"For a {investor_label} investor: {text}".strip()
+
+            if market_trend != "unknown":
+                has_today = ("today" in lower) or (market_trend in lower) or (btc_trend in lower) or (volatility in lower)
+                if not has_today:
+                    text = f"Today’s market is {market_trend} with {volatility} volatility; {text}".strip()
+
+            # Hard cap to 40 words
+            words = text.split()
+            if len(words) > 40:
+                text = " ".join(words[:40]).rstrip(" ,.;:") + "."
+
+            insight["data"] = text
+            return insight
+
+        # All models failed / returned empty
+        insight["error"] = "All free models returned empty output"
+        insight["data"] = "AI insight unavailable today. Please refresh."
+        return insight
+
     except Exception as e:
         insight["error"] = str(e)
         insight["data"] = "AI request failed."
-
-    return insight
-
+        return insight
 
 def fetch_meme(prefs: dict):
     return pick_meme(prefs)
@@ -516,9 +639,9 @@ async def dashboard(user_id: int = Depends(get_user_id)):
             "prices": {
                 "source": "mock",
                 "data": {
-                    "bitcoin": {"usd": 65000, "usd_24h_change": 1.24},
-                    "ethereum": {"usd": 3200, "usd_24h_change": -0.62},
-                },
+                "bitcoin": {"usd": 65000, "usd_24h_change": 1.24},
+                "ethereum": {"usd": 3200, "usd_24h_change": -0.62},
+            },
 
                 "error": None,
             },
