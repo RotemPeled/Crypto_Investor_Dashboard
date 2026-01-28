@@ -48,7 +48,7 @@ export default function Onboarding() {
     { id: "avalanche-2", label: "Avalanche (AVAX)" },
     { id: "chainlink", label: "Chainlink (LINK)" },
     { id: "polkadot", label: "Polkadot (DOT)" },
-    { id: "toncoin", label: "Toncoin (TON)" },
+    { id: "the-open-network", label: "Toncoin (TON)" },
   ];
 
   const TYPES = [
@@ -90,7 +90,6 @@ export default function Onboarding() {
       const best = data?.coins?.[0];
       if (best?.id) {
         setOtherResolved({ id: best.id, name: best.name, symbol: best.symbol });
-        push(`Matched "${q}" → ${best.name} (${best.symbol?.toUpperCase?.() || ""})`, "success", 2200);
       } else {
         setOtherResolved(null);
         push(`Couldn't match "${q}" to CoinGecko. It may not show prices/news.`, "info", 3200);
@@ -224,13 +223,7 @@ export default function Onboarding() {
 
                 {useOther ? (
                   <span style={{ fontSize: 12, opacity: 0.85 }}>
-                    {resolvingOther
-                      ? "Checking…"
-                      : otherResolved?.id
-                      ? `ID: ${otherResolved.id}`
-                      : otherQuery.trim()
-                      ? "Unverified"
-                      : ""}
+                    
                   </span>
                 ) : null}
               </button>

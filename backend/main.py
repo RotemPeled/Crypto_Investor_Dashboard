@@ -264,9 +264,14 @@ async def fetch_prices(client: httpx.AsyncClient, assets: list[str]):
 
         r = await client.get(f"{base}/simple/price", params=params, headers=headers)
         if r.status_code == 200:
-            prices["data"] = r.json()
+            j = r.json() or {}
+            if not j:
+                prices["error"] = "CoinGecko returned empty data (likely rate-limit or invalid ids)"
+            else:
+                prices["data"] = j
         else:
             prices["error"] = f"CoinGecko status {r.status_code}"
+
     except Exception as e:
         prices["error"] = str(e)
 
@@ -344,7 +349,7 @@ async def fetch_news(client: httpx.AsyncClient, prefs: dict, limit: int = 5):
     try:
         rn = await client.get(
             "https://cryptopanic.com/api/developer/v2/posts/",
-            params={"auth_token": token, "public": "true"},
+            params={"auth_token": token},
         )
         if rn.status_code == 200:
             
@@ -670,15 +675,16 @@ async def save_onboarding(data: OnboardingReq, user_id: int = Depends(get_user_i
 
             s_id = s.lower()
 
-            # ✅ If frontend sends CoinGecko IDs, accept them directly
-            # (basic validation: ids are usually lowercase with dashes, no spaces)
-            looks_like_id = (" " not in s_id) and all(ch.isalnum() or ch in "-_" for ch in s_id)
+            KNOWN_COINGECKO_IDS = {
+                "bitcoin","ethereum","solana","ripple","cardano","dogecoin",
+                "binancecoin","tether","avalanche-2","chainlink","polkadot","the-open-network",
+            }
 
-            if looks_like_id:
+            if s_id in KNOWN_COINGECKO_IDS:
                 resolved_ids.append(s_id)
                 continue
 
-            # ✅ Only if you allow free-text (Other)
+
             if ALLOW_FREE_TEXT:
                 found = await coingecko_search_first_id(client, s)
                 if found and found.get("id"):
@@ -909,6 +915,13 @@ async def refresh_section(
             new_value = generate_fun_section(prefs)
 
 
+    # Prevent overwriting good data with empty/failed payloads
+    if isinstance(new_value, dict):
+        if new_value.get("error"):
+            return {"preferences": prefs, "sections": existing, "updated": section, "skipped": True}
+        if section in ("prices", "chart") and not (new_value.get("data") or {}):
+            new_value["error"] = "Empty data – skipped DB update"
+            return {"preferences": prefs, "sections": existing, "updated": section, "skipped": True}
 
     with engine.connect() as conn:
         update_daily_section(conn, user_id, today, section, new_value)

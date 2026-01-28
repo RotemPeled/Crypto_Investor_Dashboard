@@ -9,36 +9,58 @@ import Section from "../ui/Section";
 import { VoteBar, RefreshIconButton } from "../ui/IconActions";
 import { useToast } from "../ui/ToastProvider";
 
+function formatDate(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit"
+  }).format(d);
+}
 function MiniLineChart({ chart }) {
   // chart expected: { data: { coinId: [[ts, price], ...] }, range, source }
-  const seriesEntries = Object.entries(chart?.data || {});
-  if (!seriesEntries.length) return null;
+  const rawEntries = Object.entries(chart?.data || {});
+  if (!rawEntries.length) return null;
 
-  // Use the first coin as X baseline length
-  const base = seriesEntries[0][1] || [];
-  if (base.length < 2) return null;
+  // Normalize each series to % change from first point (so BTC/ETH compare fairly)
+  const seriesEntries = rawEntries
+    .map(([coinId, arr]) => {
+      const clean = (arr || [])
+        .map((p) => [p?.[0], Number(p?.[1])])
+        .filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]));
+
+      if (clean.length < 2) return [coinId, []];
+
+      const first = clean[0][1];
+      if (!Number.isFinite(first) || first === 0) return [coinId, []];
+
+      const pct = clean.map(([ts, price]) => [ts, ((price / first) - 1) * 100]);
+      return [coinId, pct];
+    })
+    .filter(([, arr]) => arr.length >= 2);
+
+  if (!seriesEntries.length) return null;
 
   const W = 640;
   const H = 160;
   const PAD = 12;
 
-  // Build a unified min/max across all series
-  let minP = Infinity, maxP = -Infinity;
+  // min/max across normalized (% change) values
+  let minP = Infinity,
+    maxP = -Infinity;
   for (const [, arr] of seriesEntries) {
-    for (const p of arr || []) {
-      const price = Number(p?.[1]);
-      if (!Number.isFinite(price)) continue;
-      if (price < minP) minP = price;
-      if (price > maxP) maxP = price;
+    for (const p of arr) {
+      const v = Number(p?.[1]);
+      if (!Number.isFinite(v)) continue;
+      if (v < minP) minP = v;
+      if (v > maxP) maxP = v;
     }
   }
-  if (!Number.isFinite(minP) || !Number.isFinite(maxP) || minP === maxP) {
-    return null;
-  }
+  if (!Number.isFinite(minP) || !Number.isFinite(maxP) || minP === maxP) return null;
 
-  const toX = (i, n) => PAD + (i * (W - PAD * 2)) / (n - 1);
-  const toY = (price) => {
-    const t = (price - minP) / (maxP - minP);
+  const toY = (v) => {
+    const t = (v - minP) / (maxP - minP);
     return H - PAD - t * (H - PAD * 2);
   };
 
@@ -46,10 +68,10 @@ function MiniLineChart({ chart }) {
     const n = arr.length;
     let d = "";
     for (let i = 0; i < n; i++) {
-      const price = Number(arr[i]?.[1]);
-      if (!Number.isFinite(price)) continue;
-      const x = toX(i, n);
-      const y = toY(price);
+      const v = Number(arr[i]?.[1]);
+      if (!Number.isFinite(v)) continue;
+      const x = PAD + (i * (W - PAD * 2)) / (n - 1);
+      const y = toY(v);
       d += (d ? " L " : "M ") + `${x} ${y}`;
     }
     return d;
@@ -57,18 +79,13 @@ function MiniLineChart({ chart }) {
 
   return (
     <div className="chartBox">
-      <div className="chartTop">
-      </div>
-
       <svg viewBox={`0 0 ${W} ${H}`} className="chartSvg" role="img" aria-label="Price chart">
-        {/* grid line */}
         <line x1={PAD} y1={H / 2} x2={W - PAD} y2={H / 2} className="chartGrid" />
-
         {seriesEntries.map(([coinId, arr], idx) => (
-          <path key={coinId} d={buildPath(arr || [])} className={`chartLine line${idx % 5}`} />
+          <path key={coinId} d={buildPath(arr)} className={`chartLine line${idx % 5}`} />
         ))}
       </svg>
-      
+
       <div className="chartLegend">
         {seriesEntries.map(([coinId], idx) => (
           <div key={coinId} className="legendItem">
@@ -77,10 +94,10 @@ function MiniLineChart({ chart }) {
           </div>
         ))}
       </div>
-
     </div>
   );
 }
+
 
 export default function Dashboard() {
   const nav = useNavigate();
@@ -362,10 +379,24 @@ export default function Dashboard() {
             {(news?.data || []).slice(0, 6).map((n, idx) => {
               const itemKey = n.title || String(idx);
               const k = `news::${itemKey}`;
+              console.log("NEWS ITEM:", n);
+
               return (
                 <div key={idx} className="tile">
-                  <div className="tileTitle">{n.title}</div>
-                  <div className="tileMeta">{n.published_at || "—"}</div>
+                  {n.url ? (
+                    <a
+                      href={n.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="tileTitle"
+                    >
+                      {n.title}
+                    </a>
+                  ) : (
+                    <div className="tileTitle">{n.title}</div>
+                  )}
+
+                  <div className="tileMeta">{formatDate(n.published_at)}</div>
 
                   <div className="metaFooter">
                     <VoteBar
