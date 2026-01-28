@@ -520,9 +520,9 @@ async def fetch_ai_insight(client: httpx.AsyncClient, investor_type: str, assets
     Enforces: mentions investor_type verbatim + max 40 words.
     """
     insight = {"source": "openrouter", "data": None, "error": None}
-    key = os.getenv("OPENROUTER_API_KEY")
+    openrouter_key = os.getenv("OPENROUTER_API_KEY")
 
-    if not key:
+    if not openrouter_key:
         insight["error"] = "OPENROUTER_API_KEY missing (showing fallback)"
         insight["data"] = "No AI key configured yet."
         return insight
@@ -535,20 +535,15 @@ async def fetch_ai_insight(client: httpx.AsyncClient, investor_type: str, assets
     volatility = "unknown"
     today_str = datetime.utcnow().strftime("%Y-%m-%d")
 
-    # Optional: build a tiny "today snapshot" from CoinGecko (still free)
     try:
         if assets_clean:
             base = coingecko_base_url()
             mode = os.getenv("COINGECKO_MODE", "demo").lower()
-            key = os.getenv("COINGECKO_API_KEY")
+            cg_key = os.getenv("COINGECKO_API_KEY")
 
             headers = {}
-            if key:
-                if mode == "pro":
-                    headers["x-cg-pro-api-key"] = key
-                else:
-                    headers["x-cg-demo-api-key"] = key  # או בלי header אם אין key
-
+            if cg_key:
+                headers["x-cg-demo-api-key"] = cg_key
 
             r = await client.get(
                 f"{base}/simple/price",
@@ -578,26 +573,26 @@ async def fetch_ai_insight(client: httpx.AsyncClient, investor_type: str, assets
         pass
 
     prompt = f"""
-You are a crypto market analyst.
+    You are a crypto market analyst.
 
-Today (UTC date): {today_str}
-Investor type: {investor_label}
-User interest assets: {assets_clean}
+    Today (UTC date): {today_str}
+    Investor type: {investor_label}
+    User interest assets: {assets_clean}
 
-Market snapshot today (based on 24h change of selected assets):
-- Overall market trend: {market_trend}
-- Bitcoin direction: {btc_trend}
-- Volatility level: {volatility}
+    Market snapshot today (based on 24h change of selected assets):
+    - Overall market trend: {market_trend}
+    - Bitcoin direction: {btc_trend}
+    - Volatility level: {volatility}
 
-Instructions:
-1) Write ONE daily insight grounded in today's snapshot.
-2) It MUST be relevant to investor_type="{investor_label}" and MUST mention this exact value verbatim.
-3) You MAY focus on 1–2 assets only; do NOT force mentioning all assets.
-4) Ignore unknown/invalid assets and do not mention them.
-5) Be specific and practical (what to watch / risk / positioning), not generic.
-6) No placeholders. No price targets. No guarantees.
-7) Max 40 words. Single paragraph only.
-""".strip()
+    Instructions:
+    1) Write ONE daily insight grounded in today's snapshot.
+    2) It MUST be relevant to investor_type="{investor_label}" and MUST mention this exact value verbatim.
+    3) You MAY focus on 1–2 assets only; do NOT force mentioning all assets.
+    4) Ignore unknown/invalid assets and do not mention them.
+    5) Be specific and practical (what to watch / risk / positioning), not generic.
+    6) No placeholders. No price targets. No guarantees.
+    7) Max 40 words. Single paragraph only.
+    """.strip()
 
     FREE_MODELS = [
         "meta-llama/llama-3.3-70b-instruct:free",
@@ -609,7 +604,7 @@ Instructions:
         for model in FREE_MODELS:
             ai = await client.post(
                 "https://openrouter.ai/api/v1/chat/completions",
-                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                headers={"Authorization": f"Bearer {openrouter_key}", "Content-Type": "application/json"},
                 json={
                     "model": model,
                     "messages": [
