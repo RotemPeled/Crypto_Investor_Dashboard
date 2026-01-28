@@ -467,7 +467,18 @@ async def fetch_news(client: httpx.AsyncClient, prefs: dict, limit: int = 5):
             ]
 
     except Exception as e:
-        news["error"] = str(e)
+        news["error"] = f"{e} (showing fallback)"
+        news["source"] = "static"
+        news["data"] = [
+            {
+                "id": stable_news_id("fallback", "News fetch failed", None),
+                "title": "News fetch failed (fallback)",
+                "summary": "Showing fallback items.",
+                "url": None,
+                "published_at": None,
+                "source": "fallback",
+            }
+        ]
 
     return news
 
@@ -928,7 +939,7 @@ async def refresh_section(section: str, user_id: int = Depends(get_user_id)):
 
     # Prevent overwriting good data with empty/failed payloads
     if isinstance(new_value, dict):
-        if new_value.get("error"):
+        if new_value.get("error") and not (new_value.get("data") or {}):
             return {
                 "preferences": prefs,
                 "dashboard_id": existing["dashboard_id"],
@@ -936,6 +947,7 @@ async def refresh_section(section: str, user_id: int = Depends(get_user_id)):
                 "updated": section,
                 "skipped": True,
             }
+
 
         if section in ("prices", "chart") and not (new_value.get("data") or {}):
             return {
