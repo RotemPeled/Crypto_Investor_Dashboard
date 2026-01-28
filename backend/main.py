@@ -5,6 +5,7 @@ import random
 import hashlib
 from pathlib import Path
 from datetime import datetime, timedelta, date
+import time
 
 import jwt
 import bcrypt
@@ -18,6 +19,8 @@ from pydantic import BaseModel
 
 from db import init_db, engine
 
+PRICE_CACHE = {}  # key -> (ts, data)
+PRICE_TTL = 60
 
 # =========================================================
 # App bootstrapping
@@ -295,6 +298,11 @@ async def fetch_prices(client: httpx.AsyncClient, assets: list[str]):
     if not ids:
         prices["error"] = "No assets to fetch prices for"
         return prices
+    key_cache = ",".join(ids)
+    now = time.time()
+    hit = PRICE_CACHE.get(key_cache)
+    if hit and now - hit[0] < PRICE_TTL:
+        return {"source": "coingecko_cache", "data": hit[1], "error": None}
 
     try:
         base = coingecko_base_url()
@@ -309,8 +317,13 @@ async def fetch_prices(client: httpx.AsyncClient, assets: list[str]):
                 prices["error"] = "CoinGecko returned empty data (rate-limit or invalid ids)"
             else:
                 prices["data"] = j
+            PRICE_CACHE[key_cache] = (now, j)
         else:
             prices["error"] = f"CoinGecko status {r.status_code}"
+            
+        if r.status_code == 429:
+            prices["error"] = "CoinGecko rate-limited (429)"
+            return prices
 
     except Exception as e:
         prices["error"] = str(e)
@@ -395,14 +408,17 @@ async def fetch_news(client: httpx.AsyncClient, prefs: dict, limit: int = 5):
         return news
 
     try:
-        url = "https://cryptopanic.com/api/developer/v2/posts/"
+        url = "https://cryptopanic.com/api/v1/posts/"
         params = {
-            "auth_token": token,
-            "format": "rss",
-            "currencies": "BTC,ETH"
+        "auth_token": token,
+        "public": "true",
+        "filter": "hot",
+        "currencies": "BTC,ETH",
+        "kind": "news",
         }
-        rn = await client.get(url, params=params, timeout=15.0)
-
+        headers={"User-Agent":"crypto-investor-dashboard/1.0"}
+        rn = await client.get(url, params=params, headers=headers, timeout=15.0)
+        data = (rn.json() or {}).get("results") or []
 
         print("status:", rn.status_code)
         print("body head:", rn.text[:500])
@@ -516,8 +532,16 @@ async def fetch_ai_insight(client: httpx.AsyncClient, investor_type: str, assets
     try:
         if assets_clean:
             base = coingecko_base_url()
-            cg_key = os.getenv("COINGECKO_API_KEY")
-            headers = {"x-cg-pro-api-key": cg_key} if cg_key else {}
+            mode = os.getenv("COINGECKO_MODE", "demo").lower()
+            key = os.getenv("COINGECKO_API_KEY")
+
+            headers = {}
+            if key:
+                if mode == "pro":
+                    headers["x-cg-pro-api-key"] = key
+                else:
+                    headers["x-cg-demo-api-key"] = key  # או בלי header אם אין key
+
 
             r = await client.get(
                 f"{base}/simple/price",
