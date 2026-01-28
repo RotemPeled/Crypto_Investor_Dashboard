@@ -329,6 +329,8 @@ async def fetch_price_chart(client: httpx.AsyncClient, assets: list[str], days: 
     cg_key = os.getenv("COINGECKO_API_KEY")
     headers = {"x-cg-pro-api-key": cg_key} if cg_key else {}
 
+    failed = []
+
     try:
         for asset in assets:
             r = await client.get(
@@ -339,13 +341,20 @@ async def fetch_price_chart(client: httpx.AsyncClient, assets: list[str], days: 
             )
 
             if r.status_code != 200:
-                chart["error"] = f"CoinGecko error for {asset}"
+                failed.append(asset)
                 continue
 
             j = r.json() or {}
-            chart["data"][asset] = j.get("prices", [])
+            prices = j.get("prices", [])
+            if prices:
+                chart["data"][asset] = prices
+
     except Exception as e:
         chart["error"] = str(e)
+        return chart
+
+    if not chart["data"]:
+        chart["error"] = f"CoinGecko chart unavailable (failed assets: {failed[:3]})"
 
     return chart
 
@@ -436,7 +445,26 @@ async def fetch_news(client: httpx.AsyncClient, prefs: dict, limit: int = 5):
             ]
 
         else:
-            news["error"] = f"CryptoPanic status {rn.status_code}"
+            news["error"] = f"CryptoPanic status {rn.status_code} (showing fallback)"
+            news["source"] = "static"
+            news["data"] = [
+                {
+                    "id": stable_news_id("static", "Crypto markets: daily roundup", None),
+                    "title": "Crypto markets: daily roundup (fallback)",
+                    "summary": "CryptoPanic is unavailable right now. This is a fallback item for UX stability.",
+                    "url": "https://cryptopanic.com",   # אפשר לשים גם None
+                    "published_at": None,
+                    "source": "fallback",
+                },
+                {
+                    "id": stable_news_id("static", "Watchlist: risk & volatility", None),
+                    "title": "Watchlist: risk & volatility (fallback)",
+                    "summary": "Focus on volatility, risk sizing, and major catalysts today.",
+                    "url": None,
+                    "published_at": None,
+                    "source": "fallback",
+                },
+            ]
 
     except Exception as e:
         news["error"] = str(e)
@@ -901,9 +929,22 @@ async def refresh_section(section: str, user_id: int = Depends(get_user_id)):
     # Prevent overwriting good data with empty/failed payloads
     if isinstance(new_value, dict):
         if new_value.get("error"):
-            return {"preferences": prefs, "sections": existing, "updated": section, "skipped": True}
+            return {
+                "preferences": prefs,
+                "dashboard_id": existing["dashboard_id"],
+                "sections": existing["sections"],
+                "updated": section,
+                "skipped": True,
+            }
+
         if section in ("prices", "chart") and not (new_value.get("data") or {}):
-            return {"preferences": prefs, "sections": existing, "updated": section, "skipped": True}
+            return {
+                "preferences": prefs,
+                "dashboard_id": existing["dashboard_id"],
+                "sections": existing["sections"],
+                "updated": section,
+                "skipped": True,
+            }
 
     latest = dict(existing.get("sections") or {})
     latest[section] = new_value

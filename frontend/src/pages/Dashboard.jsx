@@ -118,8 +118,22 @@ export default function Dashboard() {
     setErr("");
     try {
       const d = await getDashboard();
-      setData(d);
-      setDashboardId(d.dashboard_id);
+      setData(prev => {
+        if (!prev) return d;
+      
+        return {
+          ...prev,
+          sections: {
+            ...prev.sections,
+            ...d.sections,               
+            sections: {
+              ...prev.sections?.sections,
+              ...d.sections?.sections,   
+            },
+          },
+        };
+      });
+      
 
       const todayVotes = await getVotesToday({ dashboard_id: d.dashboard_id });
       const map = {};
