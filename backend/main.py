@@ -395,12 +395,18 @@ async def fetch_news(client: httpx.AsyncClient, prefs: dict, limit: int = 5):
         return news
 
     try:
-        url = "https://cryptopanic.com/feed/"
-        rn = await client.get(url, timeout=15.0)
+        url = "https://cryptopanic.com/api/developer/v2/posts/"
+        params = {
+            "auth_token": token,
+            "format": "rss",
+            "currencies": "BTC,ETH"
+        }
+        rn = await client.get(url, params=params, timeout=15.0)
 
-        print("CryptoPanic URL:", url)
-        print("CryptoPanic status:", rn.status_code)
-        print("CryptoPanic raw body (first 500 chars):", rn.text[:500])
+
+        print("status:", rn.status_code)
+        print("body head:", rn.text[:500])
+
 
         if rn.status_code == 200:
             data = (rn.json() or {}).get("results") or []
@@ -481,10 +487,6 @@ async def fetch_news(client: httpx.AsyncClient, prefs: dict, limit: int = 5):
                 "source": "fallback",
             }
         ]
-    print("CryptoPanic request token len:", len(token or ""))
-    print("CryptoPanic status:", rn.status_code)
-    print("CryptoPanic body:", (rn.text or "")[:300])
-
 
     return news
 
