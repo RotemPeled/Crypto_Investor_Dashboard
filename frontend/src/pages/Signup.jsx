@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { signup } from "../api/auth";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthProvider";
@@ -15,14 +15,21 @@ export default function Signup() {
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Trim values used for validation and submission to prevent whitespace-related auth failures.
+  const nameTrimmed = useMemo(() => form.name.trim(), [form.name]);
+  const emailTrimmed = useMemo(() => form.email.trim(), [form.email]);
+  const isSubmitDisabled = loading || !nameTrimmed || !emailTrimmed || !form.password;
+
   async function onSubmit(e) {
     e.preventDefault();
     setErr("");
-    if (loading) return;
+    if (isSubmitDisabled) return;
 
     try {
       setLoading(true);
-      const res = await signup(form);
+
+      // Send trimmed name/email to backend.
+      const res = await signup({ ...form, name: nameTrimmed, email: emailTrimmed });
       if (!res?.access_token) throw new Error("Signup did not return access_token");
 
       setSession(res.access_token);
@@ -77,7 +84,7 @@ export default function Signup() {
             </div>
 
             <div className="formActionsRight">
-              <Button variant="primary" type="submit" disabled={loading}>
+              <Button variant="primary" type="submit" disabled={isSubmitDisabled}>
                 {loading ? "Creating…" : "Create"}
               </Button>
             </div>

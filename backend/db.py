@@ -16,6 +16,3 @@ def init_db():
             conn.execute(text(f.read()))
         conn.commit()
 
-def db_check():
-    with engine.connect() as conn:
-        return conn.execute(text("SELECT 1")).scalar()

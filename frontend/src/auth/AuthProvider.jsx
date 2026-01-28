@@ -8,10 +8,11 @@ export function AuthProvider({ children }) {
   const isAuthenticated = !!token;
 
   function setSession(accessToken) {
+    if (!accessToken) return logout();
     setToken(accessToken);
     localStorage.setItem("access_token", accessToken);
   }
-
+  
   function logout() {
     setToken(null);
     localStorage.removeItem("access_token");

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { login } from "../api/auth";
 import { getMe } from "../api/me";
 import { useAuth } from "../auth/AuthProvider";
@@ -16,17 +16,24 @@ export default function Login() {
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Trim values used for validation and submission to prevent whitespace-related auth failures.
+  const emailTrimmed = useMemo(() => form.email.trim(), [form.email]);
+  const isSubmitDisabled = loading || !emailTrimmed || !form.password;
+
   async function onSubmit(e) {
     e.preventDefault();
     setErr("");
-    if (loading) return;
+    if (isSubmitDisabled) return;
 
     try {
       setLoading(true);
-      const data = await login(form);
-      setSession(data.access_token);
 
+      // Send trimmed email to backend.
+      const data = await login({ ...form, email: emailTrimmed });
+
+      setSession(data.access_token);
       push("Logged in successfully.", "success", 3000);
+
       const me = await getMe();
 
       setTimeout(() => {
@@ -70,7 +77,7 @@ export default function Login() {
             </div>
 
             <div className="formActionsRight">
-              <Button variant="primary" type="submit" disabled={loading}>
+              <Button variant="primary" type="submit" disabled={isSubmitDisabled}>
                 {loading ? "Logging in…" : "Login"}
               </Button>
             </div>

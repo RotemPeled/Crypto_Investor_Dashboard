@@ -1,37 +1,49 @@
 import os
 import re
-import jwt
-from datetime import datetime, timedelta, date
-from fastapi import FastAPI, HTTPException, Depends, Query
-from pydantic import BaseModel
-from sqlalchemy import text
-import bcrypt
-from dotenv import load_dotenv
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import json
 import random
-import httpx
-from fastapi.middleware.cors import CORSMiddleware
-from db import init_db, engine
-from pathlib import Path
 import hashlib
+from pathlib import Path
+from datetime import datetime, timedelta, date
 
+import jwt
+import bcrypt
+import httpx
+from dotenv import load_dotenv
+from sqlalchemy import text
+from fastapi import FastAPI, HTTPException, Depends, Query
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+from db import init_db, engine
+
+
+# =========================================================
+# App bootstrapping
+# =========================================================
 load_dotenv()
 app = FastAPI()
 
-@app.on_event("startup")
-def on_startup():
-    init_db()
-    load_meme_catalog()
-    
 bearer = HTTPBearer()
+
 DEV_MODE = os.getenv("DEV_MODE", "false").lower() == "true"
 MEMES_FILE = os.getenv("MEMES_FILE", str(Path(__file__).with_name("memes.json")))
-MEME_CATALOG = []
+MEME_CATALOG: list[dict] = []
 
-def _parse_origins():
+# Allowed sets (kept at module-level so it's consistent across endpoints)
+ALLOWED_INVESTOR_TYPES = {"long_term", "short_term", "nft_collector", "swing_trader", "defi_yield"}
+ALLOWED_CONTENT_TYPES = {"market_news", "charts", "fun", "development", "regulation", "security", "social"}
+ALLOWED_DASHBOARD_SECTIONS = {"prices", "news", "ai_insight", "meme", "chart", "fun"}  # used by refresh + votes
+
+
+def _parse_origins() -> list[str]:
+    """
+    ALLOW_ORIGINS="http://localhost:5173,https://your-frontend.vercel.app"
+    """
     raw = os.getenv("ALLOW_ORIGINS", "http://localhost:5173")
     return [o.strip() for o in raw.split(",") if o.strip()]
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,31 +53,56 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+def on_startup():
+    # Initializes DB schema (your init_db uses schema.sql)
+    init_db()
+    load_meme_catalog()
+
+
+# =========================================================
+# Request models
+# =========================================================
 class SignupReq(BaseModel):
     name: str
     password: str
     email: str
 
+
 class LoginReq(BaseModel):
     email: str
     password: str
+
 
 class OnboardingReq(BaseModel):
     crypto_assets: list[str]
     investor_type: str
     content_type: list[str]
 
+
 class VoteReq(BaseModel):
     dashboard_id: int
-    section: str  
-    item: str 
-    value: int      
+    section: str
+    item: str
+    value: int
 
+
+# =========================================================
+# Helpers
+# =========================================================
 def stable_news_id(source: str, title: str | None, published_at: str | None) -> str:
+    """
+    Stable ID for news item so frontend can vote by item-id consistently.
+    """
     base = f"{source}|{title or ''}|{published_at or ''}".strip()
     return hashlib.sha256(base.encode("utf-8")).hexdigest()[:16]
 
+
 def load_meme_catalog():
+    """
+    Loads memes.json once on startup.
+    """
     global MEME_CATALOG
     try:
         p = Path(MEMES_FILE)
@@ -75,12 +112,17 @@ def load_meme_catalog():
         print("Failed to load memes.json:", e)
         MEME_CATALOG = []
 
-def get_user_id(creds: HTTPAuthorizationCredentials = Depends(bearer)):
+
+def get_user_id(creds: HTTPAuthorizationCredentials = Depends(bearer)) -> int:
+    """
+    JWT auth. Token is expected in Authorization: Bearer <token>
+    """
     token = creds.credentials
 
     secret = os.getenv("JWT_SECRET")
     if not secret:
         raise HTTPException(500, "JWT_SECRET is not set")
+
     alg = os.getenv("JWT_ALGORITHM", "HS256")
 
     try:
@@ -91,7 +133,11 @@ def get_user_id(creds: HTTPAuthorizationCredentials = Depends(bearer)):
     except Exception:
         raise HTTPException(401, "Invalid token")
 
+
 def _ensure_json(value, default):
+    """
+    Some DB drivers return jsonb as str; normalize.
+    """
     if value is None:
         return default
     if isinstance(value, str):
@@ -101,7 +147,8 @@ def _ensure_json(value, default):
             return default
     return value
 
-def load_user_preferences(conn, user_id: int):
+
+def load_user_preferences(conn, user_id: int) -> dict | None:
     q = text("""
         SELECT crypto_assets, investor_type, content_type
         FROM user_preferences
@@ -115,7 +162,7 @@ def load_user_preferences(conn, user_id: int):
     assets = _ensure_json(row.crypto_assets, [])
     content = _ensure_json(row.content_type, [])
 
-    # להבטיח טיפוסים צפויים:
+    # Ensure expected types
     if not isinstance(assets, list):
         assets = [assets]
     if not isinstance(content, list):
@@ -127,7 +174,8 @@ def load_user_preferences(conn, user_id: int):
         "content_type": content,
     }
 
-def load_daily_dashboard(conn, user_id: int, day: date):
+
+def load_daily_dashboard(conn, user_id: int, day_: date):
     q = text("""
         SELECT id, sections
         FROM daily_dashboard
@@ -135,7 +183,7 @@ def load_daily_dashboard(conn, user_id: int, day: date):
         ORDER BY created_at DESC
         LIMIT 1
     """)
-    row = conn.execute(q, {"user_id": user_id, "day": day}).fetchone()
+    row = conn.execute(q, {"user_id": user_id, "day": day_}).fetchone()
     if row is None:
         return None
 
@@ -146,7 +194,7 @@ def load_daily_dashboard(conn, user_id: int, day: date):
     return {"dashboard_id": int(row[0]), "sections": sections}
 
 
-def save_daily_dashboard(conn, user_id: int, day: date, sections: dict) -> int:
+def save_daily_dashboard(conn, user_id: int, day_: date, sections: dict) -> int:
     q = text("""
         INSERT INTO daily_dashboard (user_id, day, sections)
         VALUES (:user_id, :day, CAST(:sections AS jsonb))
@@ -154,13 +202,17 @@ def save_daily_dashboard(conn, user_id: int, day: date, sections: dict) -> int:
     """)
     row = conn.execute(q, {
         "user_id": user_id,
-        "day": day,
+        "day": day_,
         "sections": json.dumps(sections),
     }).fetchone()
-    conn.commit()
     return int(row[0])
 
-def pick_meme(prefs: dict, exclude_ids_or_urls: set[str] | None = None):
+
+def pick_meme(prefs: dict, exclude_ids_or_urls: set[str] | None = None) -> dict:
+    """
+    Picks a meme based on preferences (weighted),
+    and supports exclude set to avoid same meme on refresh.
+    """
     exclude_ids_or_urls = exclude_ids_or_urls or set()
 
     investor_type = (prefs.get("investor_type") or "").strip().lower()
@@ -170,7 +222,7 @@ def pick_meme(prefs: dict, exclude_ids_or_urls: set[str] | None = None):
     content_set = set(str(x).lower() for x in (content if isinstance(content, list) else [content]))
     assets_set = set(str(x).lower() for x in (assets if isinstance(assets, list) else [assets]))
 
-    candidates = []
+    candidates: list[tuple[int, dict]] = []
     for m in (MEME_CATALOG or []):
         mid = str(m.get("id") or "")
         url = str(m.get("url") or "")
@@ -189,43 +241,38 @@ def pick_meme(prefs: dict, exclude_ids_or_urls: set[str] | None = None):
             score += 4
 
         score += 2 * len(content_set.intersection(con_tags))
-
-        # asset matches – תורם קצת (לא להשתלט)
-        score += min(3, len(assets_set.intersection(ast_tags)))  # cap 3
+        score += min(3, len(assets_set.intersection(ast_tags)))  # cap so assets don't dominate
 
         candidates.append((score, m))
 
     if not candidates:
-        # fallback אם אין קטלוג/אין התאמות
         pool = MEME_CATALOG or [
             {"id": "fallback_hodl", "title": "HODL mode", "url": "https://i.imgflip.com/1bij.jpg"},
             {"id": "fallback_moon", "title": "To the moon", "url": "https://i.imgflip.com/30b1gx.jpg"},
             {"id": "fallback_bhsl", "title": "Buy high sell low", "url": "https://i.imgflip.com/1ur9b0.jpg"},
         ]
-        chosen = random.choice(pool)
+        chosen = dict(random.choice(pool))
         chosen["reason"] = {"mode": "fallback"}
         return chosen
 
-    # Weighted random: כל meme מקבל weight = score+1
     weights = [(max(0, s) + 1) for (s, _) in candidates]
     chosen = random.choices([m for (_, m) in candidates], weights=weights, k=1)[0]
 
-    # (אופציונלי) להחזיר גם "reason" לדיבוג
     chosen = dict(chosen)
     chosen["reason"] = {
         "investor_type": investor_type,
         "content": sorted(list(content_set)),
-        "assets_sample": sorted(list(assets_set))[:5]
+        "assets_sample": sorted(list(assets_set))[:5],
     }
     return chosen
 
 
-def coingecko_base_url():
+def coingecko_base_url() -> str:
     mode = os.getenv("COINGECKO_MODE", "demo").lower()
     return "https://pro-api.coingecko.com/api/v3" if mode == "pro" else "https://api.coingecko.com/api/v3"
 
-    
-def create_access_token(user_id: int):
+
+def create_access_token(user_id: int) -> str:
     secret = os.getenv("JWT_SECRET")
     if not secret:
         raise HTTPException(500, "JWT_SECRET is not set")
@@ -236,11 +283,15 @@ def create_access_token(user_id: int):
     }
     return jwt.encode(payload, secret, algorithm=alg)
 
+
 async def fetch_prices(client: httpx.AsyncClient, assets: list[str]):
+    """
+    CoinGecko /simple/price.
+    Returns consistent shape: {source, data, error}
+    """
     prices = {"source": "coingecko", "data": {}, "error": None}
 
     ids = [str(a).strip().lower() for a in assets if str(a).strip()]
-    ids = [x for x in ids if x]
     if not ids:
         prices["error"] = "No assets to fetch prices for"
         return prices
@@ -255,7 +306,7 @@ async def fetch_prices(client: httpx.AsyncClient, assets: list[str]):
         if r.status_code == 200:
             j = r.json() or {}
             if not j:
-                prices["error"] = "CoinGecko returned empty data (likely rate-limit or invalid ids)"
+                prices["error"] = "CoinGecko returned empty data (rate-limit or invalid ids)"
             else:
                 prices["data"] = j
         else:
@@ -266,13 +317,9 @@ async def fetch_prices(client: httpx.AsyncClient, assets: list[str]):
 
     return prices
 
+
 async def fetch_price_chart(client: httpx.AsyncClient, assets: list[str], days: int = 7):
-    chart = {
-        "source": "coingecko",
-        "range": f"{days}d",
-        "data": {},
-        "error": None,
-    }
+    chart = {"source": "coingecko", "range": f"{days}d", "data": {}, "error": None}
 
     if not assets:
         chart["error"] = "No assets for chart"
@@ -296,9 +343,7 @@ async def fetch_price_chart(client: httpx.AsyncClient, assets: list[str], days: 
                 continue
 
             j = r.json() or {}
-            # prices = [[timestamp, price], ...]
             chart["data"][asset] = j.get("prices", [])
-
     except Exception as e:
         chart["error"] = str(e)
 
@@ -326,13 +371,18 @@ async def coingecko_search_first_id(client: httpx.AsyncClient, query: str):
         "query": query,
     }
 
+
 async def fetch_news(client: httpx.AsyncClient, prefs: dict, limit: int = 5):
+    """
+    CryptoPanic API with simple relevance scoring.
+    Falls back to a static message if token missing.
+    """
     news = {"source": "cryptopanic", "data": [], "error": None}
     token = os.getenv("CRYPTOPANIC_TOKEN")
 
     if not token:
         news["error"] = "CRYPTOPANIC_TOKEN missing (showing fallback)"
-        news["data"] = [{"title": "No CryptoPanic token configured", "published_at": None}]
+        news["data"] = [{"id": stable_news_id("fallback", "No CryptoPanic token", None), "title": "No CryptoPanic token configured", "published_at": None}]
         return news
 
     try:
@@ -340,11 +390,12 @@ async def fetch_news(client: httpx.AsyncClient, prefs: dict, limit: int = 5):
             "https://cryptopanic.com/api/developer/v2/posts/",
             params={"auth_token": token},
         )
+
         if rn.status_code == 200:
-            
-            data = rn.json().get("results") or []
+            data = (rn.json() or {}).get("results") or []
             assets = set((prefs.get("crypto_assets") or []))
             content_types = set((prefs.get("content_type") or []))
+
             scored = []
             for item in data:
                 title = (item.get("title") or "").lower()
@@ -370,19 +421,34 @@ async def fetch_news(client: httpx.AsyncClient, prefs: dict, limit: int = 5):
                 {
                     "id": stable_news_id("cryptopanic", i.get("title"), i.get("published_at")),
                     "title": i.get("title"),
+                    "summary": (
+                        i.get("description")
+                        or (i.get("metadata") or {}).get("description")
+                        or (i.get("metadata") or {}).get("summary")
+                        or i.get("text")
+                        or ""
+                    ),
+                    "url": i.get("url") or i.get("link"),
                     "published_at": i.get("published_at"),
+                    "source": (i.get("source") or {}).get("title") or (i.get("source") or {}).get("domain"),
                 }
                 for (_, i) in scored[:limit]
             ]
 
         else:
             news["error"] = f"CryptoPanic status {rn.status_code}"
+
     except Exception as e:
         news["error"] = str(e)
 
     return news
 
+
 async def fetch_ai_insight(client: httpx.AsyncClient, investor_type: str, assets: list[str]):
+    """
+    OpenRouter free-model fallback.
+    Enforces: mentions investor_type verbatim + max 40 words.
+    """
     insight = {"source": "openrouter", "data": None, "error": None}
     key = os.getenv("OPENROUTER_API_KEY")
 
@@ -391,17 +457,15 @@ async def fetch_ai_insight(client: httpx.AsyncClient, investor_type: str, assets
         insight["data"] = "No AI key configured yet."
         return insight
 
-    # ---- sanitize inputs ----
-    assets_clean = [a.strip().lower() for a in (assets or []) if isinstance(a, str) and a.strip()]
-    assets_clean = assets_clean[:12]
-
+    assets_clean = [a.strip().lower() for a in (assets or []) if isinstance(a, str) and a.strip()][:12]
     investor_label = (investor_type or "").strip()
-    # ---- Build "today" market snapshot from CoinGecko (free public API) ----
+
     market_trend = "unknown"
     btc_trend = "unknown"
     volatility = "unknown"
     today_str = datetime.utcnow().strftime("%Y-%m-%d")
 
+    # Optional: build a tiny "today snapshot" from CoinGecko (still free)
     try:
         if assets_clean:
             base = coingecko_base_url()
@@ -410,11 +474,7 @@ async def fetch_ai_insight(client: httpx.AsyncClient, investor_type: str, assets
 
             r = await client.get(
                 f"{base}/simple/price",
-                params={
-                    "ids": ",".join(assets_clean),
-                    "vs_currencies": "usd",
-                    "include_24hr_change": "true",
-                },
+                params={"ids": ",".join(assets_clean), "vs_currencies": "usd", "include_24hr_change": "true"},
                 headers=headers,
                 timeout=15.0,
             )
@@ -422,7 +482,6 @@ async def fetch_ai_insight(client: httpx.AsyncClient, investor_type: str, assets
             if r.status_code == 200:
                 data = r.json() or {}
                 changes = []
-
                 for a in assets_clean:
                     ch = (data.get(a) or {}).get("usd_24h_change")
                     if isinstance(ch, (int, float)):
@@ -431,7 +490,6 @@ async def fetch_ai_insight(client: httpx.AsyncClient, investor_type: str, assets
                 if changes:
                     avg = sum(changes) / len(changes)
                     avg_abs = sum(abs(x) for x in changes) / len(changes)
-
                     market_trend = "bullish" if avg > 0.6 else ("bearish" if avg < -0.6 else "sideways")
                     volatility = "high" if avg_abs >= 6 else ("medium" if avg_abs >= 2.5 else "low")
 
@@ -439,10 +497,8 @@ async def fetch_ai_insight(client: httpx.AsyncClient, investor_type: str, assets
                 if isinstance(btc_ch, (int, float)):
                     btc_trend = "up" if btc_ch > 0.6 else ("down" if btc_ch < -0.6 else "flat")
     except Exception:
-        # Snapshot can remain unknown; we still allow AI to answer.
         pass
 
-    # ---- prompt ----
     prompt = f"""
 You are a crypto market analyst.
 
@@ -465,7 +521,6 @@ Instructions:
 7) Max 40 words. Single paragraph only.
 """.strip()
 
-    # ---- OpenRouter free models fallback list ----
     FREE_MODELS = [
         "meta-llama/llama-3.3-70b-instruct:free",
         "mistralai/mistral-7b-instruct:free",
@@ -493,38 +548,32 @@ Instructions:
                 print("OpenRouter non-200:", ai.status_code, "model:", model)
                 continue
 
-            j = ai.json()
-            text = (j.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
-            text = re.sub(r"\s+", " ", text).strip()
+            j = ai.json() or {}
+            txt = (j.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+            txt = re.sub(r"\s+", " ", txt).strip()
 
             print("AI model used:", model)
-            print("AI Insight raw response:", repr(text))
+            print("AI Insight raw response:", repr(txt))
 
-            # If empty, try next free model
-            if not text:
+            if not txt:
                 continue
 
-            # ---- enforce investor + today grounding if model under-delivers ----
-            lower = text.lower()
-            must_have_investor = (investor_label or "").lower() in lower
-
-            if not must_have_investor:
-                text = f"For a {investor_label} investor: {text}".strip()
+            lower = txt.lower()
+            if (investor_label or "").lower() not in lower:
+                txt = f"For a {investor_label} investor: {txt}".strip()
 
             if market_trend != "unknown":
                 has_today = ("today" in lower) or (market_trend in lower) or (btc_trend in lower) or (volatility in lower)
                 if not has_today:
-                    text = f"Today’s market is {market_trend} with {volatility} volatility; {text}".strip()
+                    txt = f"Today’s market is {market_trend} with {volatility} volatility; {txt}".strip()
 
-            # Hard cap to 40 words
-            words = text.split()
+            words = txt.split()
             if len(words) > 40:
-                text = " ".join(words[:40]).rstrip(" ,.;:") + "."
+                txt = " ".join(words[:40]).rstrip(" ,.;:") + "."
 
-            insight["data"] = text
+            insight["data"] = txt
             return insight
 
-        # All models failed / returned empty
         insight["error"] = "All free models returned empty output"
         insight["data"] = "AI insight unavailable today. Please refresh."
         return insight
@@ -534,10 +583,8 @@ Instructions:
         insight["data"] = "AI request failed."
         return insight
 
-def fetch_meme(prefs: dict):
-    return pick_meme(prefs)
 
-def generate_fun_section(prefs: dict):
+def generate_fun_section(_: dict):
     moods = [
         "Market mood: cautious optimism.",
         "Market mood: leverage is creeping back.",
@@ -545,28 +592,21 @@ def generate_fun_section(prefs: dict):
         "Market mood: everyone thinks they're early.",
         "Market mood: low conviction, high noise.",
     ]
-
     facts = [
         "Most traders lose money not on bad entries – but bad exits.",
         "High volatility days statistically favor patient traders.",
         "Big moves often start when sentiment is most divided.",
         "Sideways markets cause more losses than crashes.",
     ]
+    return {"type": "fun", "variant": "daily_fun", "text": random.choice(moods + facts)}
 
-    return {
-        "type": "fun",
-        "variant": "daily_fun",
-        "text": random.choice(moods + facts),
-    }
 
-# saving new user in DB
+# =========================================================
+# Auth endpoints
+# =========================================================
 @app.post("/auth/signup")
 def signup(data: SignupReq):
-    # hash password
-    hashed_password = bcrypt.hashpw(
-        data.password.encode("utf-8"),
-        bcrypt.gensalt()
-    ).decode("utf-8")
+    hashed_password = bcrypt.hashpw(data.password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
     query = text("""
         INSERT INTO users (name, email, password_hash)
@@ -574,54 +614,46 @@ def signup(data: SignupReq):
         RETURNING id
     """)
 
-    with engine.connect() as conn:
-        try:
-            result = conn.execute(
-                query,
-                {
-                    "name": data.name,
-                    "email": data.email,
-                    "password_hash": hashed_password,
-                }
-            )
-            conn.commit()
-            user_id = result.scalar()
-        except Exception:
-            raise HTTPException(400, "User already exists")
+    try:
+        with engine.begin() as conn:
+            user_id = conn.execute(query, {
+                "name": data.name,
+                "email": data.email,
+                "password_hash": hashed_password,
+            }).scalar()
+    except Exception:
+        # Keep simple; you can tighten later with IntegrityError if you want
+        raise HTTPException(409, "User already exists")
 
-    token = create_access_token(user_id)
-
+    token = create_access_token(int(user_id))
     return {
         "message": "user has been created successfully",
-        "user_id": user_id,
+        "user_id": int(user_id),
         "access_token": token,
         "token_type": "bearer",
-        "needsOnboarding": True
+        "needsOnboarding": True,
     }
 
-# authenticate user
+
 @app.post("/auth/login")
 def login(data: LoginReq):
     query = text("SELECT id, password_hash FROM users WHERE email = :email")
+
     with engine.connect() as conn:
-        result = conn.execute(query, {"email": data.email})
-        user = result.fetchone()
-        
-        # check if user exists
-        if user is None:
-            raise HTTPException(401, "Invalid email or password")
-        
-        user_id, password_hash = user
-        
-        # verify password
-        valid = bcrypt.checkpw(data.password.encode("utf-8"), password_hash.encode("utf-8"))
-        if not valid:
-            raise HTTPException(401, "Invalid email or password")
-        
-        token = create_access_token(user_id)
-        return {"access_token": token, "token_type": "bearer"}
-    
-# get current user info
+        user = conn.execute(query, {"email": data.email}).fetchone()
+
+    if user is None:
+        raise HTTPException(401, "Invalid email or password")
+
+    user_id, password_hash = user
+    valid = bcrypt.checkpw(data.password.encode("utf-8"), password_hash.encode("utf-8"))
+    if not valid:
+        raise HTTPException(401, "Invalid email or password")
+
+    token = create_access_token(int(user_id))
+    return {"access_token": token, "token_type": "bearer"}
+
+
 @app.get("/me")
 def me(user_id: int = Depends(get_user_id)):
     user_q = text("SELECT id, name, email FROM users WHERE id = :id")
@@ -636,20 +668,12 @@ def me(user_id: int = Depends(get_user_id)):
 
     return {"id": user.id, "name": user.name, "email": user.email, "needsOnboarding": (not has_pref)}
 
+
+# =========================================================
+# Onboarding
+# =========================================================
 @app.post("/onboarding")
 async def save_onboarding(data: OnboardingReq, user_id: int = Depends(get_user_id)):
-    q = text("""
-        INSERT INTO user_preferences (user_id, crypto_assets, investor_type, content_type)
-        VALUES (:user_id, CAST(:crypto_assets AS jsonb), :investor_type, CAST(:content_type AS jsonb))
-    """)
-
-    raw_assets = data.crypto_assets or []
-    resolved_ids: list[str] = []
-    warnings: list[str] = []
-    
-    ALLOWED_INVESTOR_TYPES = {"long_term", "short_term", "nft_collector", "swing_trader", "defi_yield"}
-    ALLOWED_CONTENT_TYPES = {"market_news", "charts", "fun", "development", "regulation", "security", "social"}
-
     if data.investor_type not in ALLOWED_INVESTOR_TYPES:
         raise HTTPException(400, "Invalid investor_type")
 
@@ -657,9 +681,17 @@ async def save_onboarding(data: OnboardingReq, user_id: int = Depends(get_user_i
     if not isinstance(ct, list) or any(x not in ALLOWED_CONTENT_TYPES for x in ct):
         raise HTTPException(400, "Invalid content_type")
 
+    raw_assets = data.crypto_assets or []
+    resolved_ids: list[str] = []
+    warnings: list[str] = []
 
-    # If you still allow "Other" free-text, keep this ON.
+    # You currently allow free-text -> resolve with CoinGecko search
     ALLOW_FREE_TEXT = True
+
+    KNOWN_COINGECKO_IDS = {
+        "bitcoin", "ethereum", "solana", "ripple", "cardano", "dogecoin",
+        "binancecoin", "tether", "avalanche-2", "chainlink", "polkadot", "the-open-network",
+    }
 
     async with httpx.AsyncClient(timeout=12) as client:
         for a in raw_assets:
@@ -669,15 +701,9 @@ async def save_onboarding(data: OnboardingReq, user_id: int = Depends(get_user_i
 
             s_id = s.lower()
 
-            KNOWN_COINGECKO_IDS = {
-                "bitcoin","ethereum","solana","ripple","cardano","dogecoin",
-                "binancecoin","tether","avalanche-2","chainlink","polkadot","the-open-network",
-            }
-
             if s_id in KNOWN_COINGECKO_IDS:
                 resolved_ids.append(s_id)
                 continue
-
 
             if ALLOW_FREE_TEXT:
                 found = await coingecko_search_first_id(client, s)
@@ -693,36 +719,34 @@ async def save_onboarding(data: OnboardingReq, user_id: int = Depends(get_user_i
     resolved_ids = [x for x in resolved_ids if not (x in seen or seen.add(x))]
 
     if not resolved_ids:
-        return {
-            "saved": False,
-            "message": "Coin not found – please try again",
-            "warnings": (warnings or ["Coin not found – please try again"]),
-        }
+        return {"saved": False, "message": "Coin not found – please try again", "warnings": (warnings or ["Coin not found – please try again"])}
+
+    q = text("""
+        INSERT INTO user_preferences (user_id, crypto_assets, investor_type, content_type)
+        VALUES (:user_id, CAST(:crypto_assets AS jsonb), :investor_type, CAST(:content_type AS jsonb))
+    """)
 
     try:
-        with engine.connect() as conn:
+        with engine.begin() as conn:
             conn.execute(q, {
                 "user_id": user_id,
                 "crypto_assets": json.dumps(resolved_ids),
                 "investor_type": data.investor_type,
                 "content_type": json.dumps(data.content_type),
             })
-            conn.commit()
     except Exception:
         raise HTTPException(status_code=409, detail="Onboarding already completed")
 
-    return {
-        "saved": True,
-        "message": "onboarding saved",
-        "warnings": warnings,
-        "crypto_assets": resolved_ids,
-    }
+    return {"saved": True, "message": "onboarding saved", "warnings": warnings, "crypto_assets": resolved_ids}
 
+
+# =========================================================
+# Dashboard
+# =========================================================
 @app.get("/dashboard")
 async def dashboard(user_id: int = Depends(get_user_id)):
     with engine.connect() as conn:
         prefs = load_user_preferences(conn, user_id)
-
     if prefs is None:
         raise HTTPException(400, "Onboarding not completed")
 
@@ -730,30 +754,25 @@ async def dashboard(user_id: int = Depends(get_user_id)):
 
     with engine.connect() as conn:
         existing = load_daily_dashboard(conn, user_id, today)
-
     if existing is not None:
-        return {
-            "preferences": prefs,
-            "dashboard_id": existing["dashboard_id"],
-            "sections": existing["sections"],
-        }
+        return {"preferences": prefs, "dashboard_id": existing["dashboard_id"], "sections": existing["sections"]}
 
+    # DEV_MODE: return fast mock without external calls
     if DEV_MODE:
         sections = {
             "prices": {
                 "source": "mock",
                 "data": {
-                "bitcoin": {"usd": 65000, "usd_24h_change": 1.24},
-                "ethereum": {"usd": 3200, "usd_24h_change": -0.62},
-            },
-
+                    "bitcoin": {"usd": 65000, "usd_24h_change": 1.24},
+                    "ethereum": {"usd": 3200, "usd_24h_change": -0.62},
+                },
                 "error": None,
             },
             "news": {
                 "source": "mock",
                 "data": [
-                    {"title": "Bitcoin holds steady as volatility drops", "published_at": str(today)},
-                    {"title": "ETH staking demand rises ahead of upgrade rumors", "published_at": str(today)},
+                    {"id": stable_news_id("mock", "Bitcoin holds steady as volatility drops", str(today)), "title": "Bitcoin holds steady as volatility drops", "published_at": str(today)},
+                    {"id": stable_news_id("mock", "ETH staking demand rises ahead of upgrade rumors", str(today)), "title": "ETH staking demand rises ahead of upgrade rumors", "published_at": str(today)},
                 ],
                 "error": None,
             },
@@ -762,13 +781,12 @@ async def dashboard(user_id: int = Depends(get_user_id)):
                 "data": "Keep risk controlled. Scale in slowly, avoid chasing candles.",
                 "error": None,
             },
-            "meme": fetch_meme(prefs),
+            "meme": pick_meme(prefs),
         }
-        if "charts" in prefs.get("content_type", []):
-            now = int(datetime.utcnow().timestamp() * 1000)
-            day = 24 * 60 * 60 * 1000
 
-            # אם המשתמש בחר מטבעות – נשתמש בהם, אחרת דיפולט
+        if "charts" in prefs.get("content_type", []):
+            now_ms = int(datetime.utcnow().timestamp() * 1000)
+            day_ms = 24 * 60 * 60 * 1000
             ids = (prefs.get("crypto_assets") or ["bitcoin", "ethereum"])[:4]
 
             data = {}
@@ -777,96 +795,64 @@ async def dashboard(user_id: int = Depends(get_user_id)):
                 series = []
                 v = base + i * 25
                 for k in range(7):
-                    # קצת רעש כדי שיראו קו
                     v = v * (1 + (random.random() - 0.5) * 0.02)
-                    series.append([now - (6 - k) * day, round(v, 2)])
+                    series.append([now_ms - (6 - k) * day_ms, round(v, 2)])
                 data[cid] = series
 
             sections["chart"] = {
                 "source": "mock",
                 "range": "7d",
                 "data": data,
-                "error": None
-        }
-
+                "error": None,
+            }
 
         if "fun" in prefs.get("content_type", []):
             sections["fun"] = generate_fun_section(prefs)
 
-
-        with engine.connect() as conn:
+        with engine.begin() as conn:
             dashboard_id = save_daily_dashboard(conn, user_id, today, sections)
 
         return {"preferences": prefs, "dashboard_id": dashboard_id, "sections": sections}
 
-    asset_ids = [str(x).strip().lower() for x in (prefs["crypto_assets"] or []) if str(x).strip()]
-    investor_type = prefs["investor_type"]
+    # Real mode
+    asset_ids = [str(x).strip().lower() for x in (prefs.get("crypto_assets") or []) if str(x).strip()]
+    investor_type = prefs.get("investor_type") or ""
+    content_types = set(prefs.get("content_type") or [])
 
-    coins_meta = [{"id": cid, "name": cid.replace("-", " ").title()} for cid in asset_ids]
+    include_charts = "charts" in content_types
+    include_fun = "fun" in content_types
+
+    # Keep total content tight when adding optional sections
+    news_limit = 5 - (1 if include_charts else 0) - (1 if include_fun else 0)
+    news_limit = max(2, news_limit)
 
     async with httpx.AsyncClient(timeout=12) as client:
-        prices = {"source": "coingecko", "data": {}, "meta": coins_meta, "error": None}
-
-        if asset_ids:
-            r = await client.get(
-                f"{coingecko_base_url()}/simple/price",
-                params={"ids": ",".join(asset_ids), "vs_currencies": "usd", "include_24hr_change": "true"},
-            )
-
-            if r.status_code == 200:
-                prices["data"] = r.json()
-            else:
-                prices["error"] = f"CoinGecko status {r.status_code}"
-
-        content_types = set(prefs.get("content_type", []))
-
-        include_charts = "charts" in content_types
-        include_fun = "fun" in content_types
-
-        news_limit = 5
-        if include_charts:
-            news_limit -= 1
-        if include_fun:
-            news_limit -= 1
-
+        prices = await fetch_prices(client, asset_ids)
         news = await fetch_news(client, prefs, limit=news_limit)
         insight = await fetch_ai_insight(client, investor_type, asset_ids)
-        chart = None
+
+        sections = {
+            "prices": prices,
+            "news": news,
+            "ai_insight": insight,
+            "meme": pick_meme(prefs),
+        }
+
         if include_charts:
-            chart = await fetch_price_chart(client, asset_ids, days=7)
+            sections["chart"] = await fetch_price_chart(client, asset_ids, days=7)
 
-        fun = None
         if include_fun:
-            fun = generate_fun_section(prefs)
+            sections["fun"] = generate_fun_section(prefs)
 
-    meme = fetch_meme(prefs)
-
-    sections = {
-    "prices": prices,
-    "news": news,
-    "ai_insight": insight,
-    "meme": meme,
-    }
-    if chart:
-        sections["chart"] = chart
-    if fun:
-        sections["fun"] = fun
-
-
-    with engine.connect() as conn:
+    with engine.begin() as conn:
         dashboard_id = save_daily_dashboard(conn, user_id, today, sections)
 
     return {"preferences": prefs, "dashboard_id": dashboard_id, "sections": sections}
 
 
 @app.post("/dashboard/refresh/{section}")
-async def refresh_section(
-    section: str,
-    user_id: int = Depends(get_user_id)
-):
-    allowed = {"prices", "news", "ai_insight", "meme", "chart", "fun"}
-
-    if section not in allowed:
+async def refresh_section(section: str, user_id: int = Depends(get_user_id)):
+    if section not in ALLOWED_DASHBOARD_SECTIONS:
         raise HTTPException(400, "Invalid section")
 
     with engine.connect() as conn:
@@ -881,62 +867,69 @@ async def refresh_section(
     if existing is None:
         raise HTTPException(400, "Daily dashboard not generated yet. Call GET /dashboard first.")
 
-    assets = [str(x).strip().lower() for x in (prefs["crypto_assets"] or []) if str(x).strip()]
-    investor_type = prefs["investor_type"]
+    assets = [str(x).strip().lower() for x in (prefs.get("crypto_assets") or []) if str(x).strip()]
+    investor_type = prefs.get("investor_type") or ""
 
     async with httpx.AsyncClient(timeout=12) as client:
         if section == "prices":
             new_value = await fetch_prices(client, assets)
+
         elif section == "news":
-            content_types = set(prefs.get("content_type", []))
+            content_types = set(prefs.get("content_type") or [])
             include_charts = "charts" in content_types
             include_fun = "fun" in content_types
-
-            news_limit = 5
-            if include_charts:
-                news_limit -= 1
-            if include_fun:
-                news_limit -= 1
-
+            news_limit = max(2, 5 - (1 if include_charts else 0) - (1 if include_fun else 0))
             new_value = await fetch_news(client, prefs, limit=news_limit)
+
         elif section == "ai_insight":
             new_value = await fetch_ai_insight(client, investor_type, assets)
+
         elif section == "meme":
             current = (existing.get("sections") or {}).get("meme") or {}
             exclude = set()
             if isinstance(current, dict):
-                if current.get("id"): exclude.add(str(current["id"]))
-                if current.get("url"): exclude.add(str(current["url"]))
+                if current.get("id"):
+                    exclude.add(str(current["id"]))
+                if current.get("url"):
+                    exclude.add(str(current["url"]))
             new_value = pick_meme(prefs, exclude_ids_or_urls=exclude)
+
         elif section == "chart":
             new_value = await fetch_price_chart(client, assets, days=7)
+
         elif section == "fun":
             new_value = generate_fun_section(prefs)
 
+        else:
+            raise HTTPException(400, "Invalid section")
 
     # Prevent overwriting good data with empty/failed payloads
     if isinstance(new_value, dict):
         if new_value.get("error"):
             return {"preferences": prefs, "sections": existing, "updated": section, "skipped": True}
         if section in ("prices", "chart") and not (new_value.get("data") or {}):
-            new_value["error"] = "Empty data – skipped DB update"
             return {"preferences": prefs, "sections": existing, "updated": section, "skipped": True}
 
-    # build updated sections in memory from latest snapshot
-    latest = existing["sections"] if isinstance(existing, dict) else (existing or {})
-    latest = dict(latest)
+    latest = dict(existing.get("sections") or {})
     latest[section] = new_value
 
-    with engine.connect() as conn:
+    with engine.begin() as conn:
         dashboard_id = save_daily_dashboard(conn, user_id, today, latest)
 
     return {"preferences": prefs, "dashboard_id": dashboard_id, "sections": latest, "updated": section}
 
 
+# =========================================================
+# Votes
+# =========================================================
 @app.post("/votes")
 def vote(data: VoteReq, user_id: int = Depends(get_user_id)):
     if data.value not in (1, -1):
         raise HTTPException(400, "value must be 1 or -1")
+
+    # Tighten section to avoid garbage values in DB
+    if data.section not in ALLOWED_DASHBOARD_SECTIONS:
+        raise HTTPException(400, "Invalid section")
 
     q = text("""
         INSERT INTO user_votes (user_id, day, dashboard_id, section, item, value)
@@ -945,17 +938,17 @@ def vote(data: VoteReq, user_id: int = Depends(get_user_id)):
         DO UPDATE SET value = EXCLUDED.value, created_at = now()
     """)
 
-    with engine.connect() as conn:
+    with engine.begin() as conn:
         conn.execute(q, {
             "user_id": user_id,
             "dashboard_id": data.dashboard_id,
             "section": data.section,
             "item": data.item,
-            "value": data.value
+            "value": data.value,
         })
-        conn.commit()
 
     return {"message": "vote saved"}
+
 
 @app.get("/votes")
 def get_votes(
@@ -963,7 +956,6 @@ def get_votes(
     dashboard_id: int | None = None,
     user_id: int = Depends(get_user_id),
 ):
-
     q = """
         SELECT section, item, value
         FROM user_votes

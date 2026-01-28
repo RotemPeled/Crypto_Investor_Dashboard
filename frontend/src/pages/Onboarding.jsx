@@ -1,284 +1,511 @@
-import React, { useMemo, useState } from "react";
-import { api } from "../api/client";
-import { ENDPOINTS } from "../api/endpoints";
+import React, { useEffect, useMemo, useState } from "react";
+import { getDashboard, refreshSection } from "../api/dashboard";
+import { saveVote, getVotesToday } from "../api/votes";
+import { useAuth } from "../auth/AuthProvider";
 import { useNavigate } from "react-router-dom";
 import Shell from "../ui/Shell";
 import { Button } from "../ui/Form";
+import Section from "../ui/Section";
+import { VoteBar, RefreshIconButton } from "../ui/IconActions";
 import { useToast } from "../ui/ToastProvider";
 
-function Pill({ active, onClick, children }) {
+/**
+ * Formats ISO timestamps in a stable, human-friendly way.
+ * Falls back to raw input when parsing fails.
+ */
+function formatDate(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(d);
+}
+
+/**
+ * Small chart preview for the "chart" section.
+ * Expects: { data: { coinId: [[ts, price], ...] }, range, source }
+ */
+function MiniLineChart({ chart }) {
+  const rawEntries = Object.entries(chart?.data || {});
+  if (!rawEntries.length) return null;
+
+  // Normalize each series to % change from first point (cross-coin comparable).
+  const seriesEntries = rawEntries
+    .map(([coinId, arr]) => {
+      const clean = (arr || [])
+        .map((p) => [p?.[0], Number(p?.[1])])
+        .filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]));
+
+      if (clean.length < 2) return [coinId, []];
+
+      const first = clean[0][1];
+      if (!Number.isFinite(first) || first === 0) return [coinId, []];
+
+      const pct = clean.map(([ts, price]) => [ts, (price / first - 1) * 100]);
+      return [coinId, pct];
+    })
+    .filter(([, arr]) => arr.length >= 2);
+
+  if (!seriesEntries.length) return null;
+
+  const W = 640;
+  const H = 160;
+  const PAD = 12;
+
+  let minP = Infinity;
+  let maxP = -Infinity;
+
+  for (const [, arr] of seriesEntries) {
+    for (const p of arr) {
+      const v = Number(p?.[1]);
+      if (!Number.isFinite(v)) continue;
+      if (v < minP) minP = v;
+      if (v > maxP) maxP = v;
+    }
+  }
+
+  if (!Number.isFinite(minP) || !Number.isFinite(maxP) || minP === maxP) return null;
+
+  const toY = (v) => {
+    const t = (v - minP) / (maxP - minP);
+    return H - PAD - t * (H - PAD * 2);
+  };
+
+  const buildPath = (arr) => {
+    const n = arr.length;
+    let d = "";
+    for (let i = 0; i < n; i++) {
+      const v = Number(arr[i]?.[1]);
+      if (!Number.isFinite(v)) continue;
+      const x = PAD + (i * (W - PAD * 2)) / (n - 1);
+      const y = toY(v);
+      d += (d ? " L " : "M ") + `${x} ${y}`;
+    }
+    return d;
+  };
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`pill ${active ? "pillActive" : ""}`}
-    >
-      {active ? <span className="pillCheck">✓</span> : null}
-      {children}
-    </button>
+    <div className="chartBox">
+      <svg viewBox={`0 0 ${W} ${H}`} className="chartSvg" role="img" aria-label="Price chart">
+        <line x1={PAD} y1={H / 2} x2={W - PAD} y2={H / 2} className="chartGrid" />
+        {seriesEntries.map(([coinId, arr], idx) => (
+          <path key={coinId} d={buildPath(arr)} className={`chartLine line${idx % 5}`} />
+        ))}
+      </svg>
+
+      <div className="chartLegend">
+        {seriesEntries.map(([coinId], idx) => (
+          <div key={coinId} className="legendItem">
+            <span className={`legendSwatch line${idx % 5}`} />
+            <span className="legendLabel">{coinId}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
-export default function Onboarding() {
+export default function Dashboard() {
   const nav = useNavigate();
+  const { logout } = useAuth();
   const { push } = useToast();
 
+  const [data, setData] = useState(null);
   const [err, setErr] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [refreshBusy, setRefreshBusy] = useState({}); // section -> true
+  const [dashboardId, setDashboardId] = useState(null);
 
-  const [cryptoAssets, setCryptoAssets] = useState([]);
-  const [investorType, setInvestorType] = useState("");
-  const [contentType, setContentType] = useState([]);
+  // In-session vote cache: key = "section::item"
+  const [votes, setVotes] = useState({});
+  const [voteBusy, setVoteBusy] = useState({}); // key -> true
 
-  // Other asset (attempt to resolve to CoinGecko ID)
-  const [useOther, setUseOther] = useState(false);
-  const [otherQuery, setOtherQuery] = useState("");
-  const [otherResolved, setOtherResolved] = useState(null); // { id, name, symbol }
-  const [resolvingOther, setResolvingOther] = useState(false);
-
-  const ASSETS = [
-    { id: "bitcoin", label: "Bitcoin" },
-    { id: "ethereum", label: "Ethereum" },
-    { id: "solana", label: "Solana" },
-    { id: "ripple", label: "Ripple (XRP)" },
-    { id: "cardano", label: "Cardano" },
-    { id: "dogecoin", label: "Dogecoin" },
-    { id: "binancecoin", label: "BNB" },
-    { id: "tether", label: "Tether (USDT)" },
-    { id: "avalanche-2", label: "Avalanche (AVAX)" },
-    { id: "chainlink", label: "Chainlink (LINK)" },
-    { id: "polkadot", label: "Polkadot (DOT)" },
-    { id: "the-open-network", label: "Toncoin (TON)" },
-  ];
-
-  const TYPES = [
-    { value: "long_term", label: "HODLer" },
-    { value: "short_term", label: "Day Trader" },
-    { value: "nft_collector", label: "NFT Collector" },
-    { value: "swing_trader", label: "Swing Trader" },
-    { value: "defi_yield", label: "DeFi Yield Farmer" },
-  ];
-
-  const CONTENT_TYPES = [
-    { value: "market_news", label: "Market News & Price Moves" },
-    { value: "charts", label: "Charts & Technical Analysis" },
-    { value: "fun", label: "Fun (Memes & Humor)" },
-    { value: "development", label: "Project Updates & Development" },
-    { value: "regulation", label: "Regulation & Macro" },
-    { value: "security", label: "Security & Risks" },
-    { value: "social", label: "Social Buzz & Sentiment" },
-  ];
-
-  function toggle(arr, v) {
-    return arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v];
+  /**
+   * Loads votes for the given dashboard snapshot.
+   * This keeps votes aligned with the content currently displayed.
+   */
+  async function loadVotesForDashboard(dId) {
+    const todayVotes = await getVotesToday({ dashboard_id: dId });
+    const map = {};
+    for (const v of todayVotes) {
+      map[`${v.section}::${v.item}`] = v.value;
+    }
+    setVotes(map);
   }
 
-  async function resolveOtherToCoinGecko(queryRaw) {
-    const q = (queryRaw || "").trim();
-    if (!q) {
-      setOtherResolved(null);
-      return;
-    }
-
-    setResolvingOther(true);
-    try {
-      const url = `https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(q)}`;
-      const r = await fetch(url);
-      if (!r.ok) throw new Error("CoinGecko search failed");
-      const data = await r.json();
-
-      const best = data?.coins?.[0];
-      if (best?.id) {
-        setOtherResolved({ id: best.id, name: best.name, symbol: best.symbol });
-      } else {
-        setOtherResolved(null);
-        push(`Couldn't match "${q}" to CoinGecko. It may not show prices/news.`, "info", 3200);
-      }
-    } catch {
-      setOtherResolved(null);
-      push("Couldn't verify the 'Other' asset right now. You can still save it.", "info", 3200);
-    } finally {
-      setResolvingOther(false);
-    }
-  }
-
-  const isValid = useMemo(() => {
-    const otherOk = useOther && otherQuery.trim().length > 0;
-    const hasAsset = cryptoAssets.length > 0 || otherOk;
-    return hasAsset && investorType && contentType.length > 0;
-  }, [cryptoAssets, investorType, contentType, useOther, otherQuery]);
-
-  async function onSubmit(e) {
-    e.preventDefault();
+  async function load() {
     setErr("");
-    if (saving) return;
-
-    if (!isValid) {
-      setErr("Select at least 1 asset, 1 investor type, and 1 content type.");
-      return;
-    }
-
     try {
-      setSaving(true);
-
-      const finalAssets = [...cryptoAssets];
-
-      if (useOther && otherQuery.trim()) {
-        // Prefer CoinGecko ID if matched; otherwise save raw text
-        finalAssets.push(otherResolved?.id || otherQuery.trim());
-        if (!otherResolved?.id) {
-          push("Note: 'Other' asset wasn't matched to CoinGecko ID, so it may not fully work in Prices/News.", "info", 3500);
-        }
-      }
-
-      const res = await api.post(ENDPOINTS.onboarding, {
-        crypto_assets: finalAssets,
-        investor_type: investorType,
-        content_type: contentType,
-      });
-
-      const warnings = res?.data?.warnings || [];
-      const saved = !!res?.data?.saved;
-
-      warnings.forEach((w) => push(w, "info", 3500));
-
-      if (!saved) {
-        const msg = res?.data?.message || "Please choose at least one valid asset.";
-        setErr(msg);
-        push(msg, "error", 3500);
+      const d = await getDashboard();
+      setData(d);
+      setDashboardId(d.dashboard_id);
+      await loadVotesForDashboard(d.dashboard_id);
+    } catch (e2) {
+      if (e2?.response?.status === 401) {
+        logout();
+        nav("/login");
         return;
       }
-
-      push("Saved! Your choices will personalize the dashboard.", "success", 2500);
-      setTimeout(() => nav("/dashboard"), 700);
-    } catch (e2) {
-      const msg = e2?.response?.data?.detail || "Failed to save onboarding";
-      setErr(msg);
-      push(msg, "error", 3000);
-    } finally {
-      setSaving(false);
+      setErr(e2?.response?.data?.detail || "Failed to load dashboard");
     }
   }
 
+  async function refresh(section) {
+    if (refreshBusy[section]) return;
+
+    setRefreshBusy((p) => ({ ...p, [section]: true }));
+    try {
+      const d = await refreshSection(section);
+      setData(d);
+      setDashboardId(d.dashboard_id);
+
+      // Content can change on refresh; reload votes for this snapshot.
+      await loadVotesForDashboard(d.dashboard_id);
+    } catch (e) {
+      if (e?.response?.status === 401) {
+        logout();
+        nav("/login");
+        return;
+      }
+      const msg = e?.response?.data?.detail || `Failed to refresh ${section}`;
+      push(msg, "error", 3000);
+    } finally {
+      setRefreshBusy((p) => {
+        const copy = { ...p };
+        delete copy[section];
+        return copy;
+      });
+    }
+  }
+
+  async function vote(section, item, value) {
+    if (!dashboardId) return;
+
+    const key = `${section}::${item}`;
+    const current = votes[key] || 0;
+
+    if (current === value) return;
+    if (voteBusy[key]) return;
+
+    // Optimistic UI update
+    setVotes((p) => ({ ...p, [key]: value }));
+    setVoteBusy((p) => ({ ...p, [key]: true }));
+
+    try {
+      await saveVote({ dashboard_id: dashboardId, section, item, value });
+    } catch (e) {
+      // Rollback on failure
+      setVotes((p) => ({ ...p, [key]: current }));
+      push("Failed to save vote", "error", 2500);
+    } finally {
+      setVoteBusy((p) => {
+        const copy = { ...p };
+        delete copy[key];
+        return copy;
+      });
+    }
+  }
+
+  /**
+   * Initial load with unmount guard to avoid updating state after navigation.
+   */
+  useEffect(() => {
+    let mounted = true;
+
+    (async () => {
+      try {
+        const d = await getDashboard();
+        if (!mounted) return;
+
+        setData(d);
+        setDashboardId(d.dashboard_id);
+
+        const todayVotes = await getVotesToday({ dashboard_id: d.dashboard_id });
+        if (!mounted) return;
+
+        const map = {};
+        for (const v of todayVotes) {
+          map[`${v.section}::${v.item}`] = v.value;
+        }
+        setVotes(map);
+      } catch (e2) {
+        if (!mounted) return;
+
+        if (e2?.response?.status === 401) {
+          logout();
+          nav("/login");
+          return;
+        }
+        setErr(e2?.response?.data?.detail || "Failed to load dashboard");
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (err) {
+    return (
+      <Shell
+        title="Dashboard"
+        subtitle="Something went wrong."
+        right={
+          <Button
+            variant="danger"
+            onClick={() => {
+              logout();
+              nav("/login");
+            }}
+          >
+            Logout
+          </Button>
+        }
+      >
+        <div className="error">{err}</div>
+        <div style={{ marginTop: 12 }}>
+          <Button onClick={load}>Retry</Button>
+        </div>
+      </Shell>
+    );
+  }
+
+  if (!data) {
+    return (
+      <Shell title="Dashboard" subtitle="Loading your sections…" right={<span className="badge">Today</span>}>
+        <div className="badge">Fetching data…</div>
+      </Shell>
+    );
+  }
+
+  const s = data.sections || {};
+  const prices = s.prices;
+  const news = s.news;
+  const ai = s.ai_insight;
+  const meme = s.meme;
+  const chart = s.chart;
+  const fun = s.fun;
+
+  // Optional meta mapping (if your backend adds coin metadata later).
+  const pricesMetaById = useMemo(() => {
+    const list = prices?.meta || [];
+    const map = {};
+    for (const m of list) map[m.id] = m;
+    return map;
+  }, [prices?.meta]);
+
+  // Simple helpers for "section has data" logic.
+  const pricesEntries = prices?.data ? Object.entries(prices.data) : [];
+  const newsItems = (news?.data || []).slice(0, 6);
+
   return (
-    <Shell title="Personalize your feed" subtitle="Choose assets, style, and the content you want.">
-      <form onSubmit={onSubmit} className="grid" style={{ gap: 18 }}>
-        <div className="card" style={{ background: "transparent" }}>
-          <div className="cardInner">
-            <div className="label">Crypto assets</div>
-
-            <div className="row" style={{ flexWrap: "wrap", justifyContent: "flex-start" }}>
-              {ASSETS.map((a) => (
-                <Pill
-                  key={a.id}
-                  active={cryptoAssets.includes(a.id)}
-                  onClick={() => setCryptoAssets((p) => toggle(p, a.id))}
-                >
-                  {a.label}
-                </Pill>
-              ))}
-
-              {/* Other pill with CoinGecko resolution */}
-              <button
-                type="button"
-                className={`pill ${useOther ? "pillActive" : ""}`}
-                onClick={() => {
-                  setUseOther((p) => {
-                    const next = !p;
-                    if (!next) {
-                      setOtherQuery("");
-                      setOtherResolved(null);
-                    }
-                    return next;
-                  });
-                }}
-                style={{ display: "inline-flex", alignItems: "center", gap: 8 }}
-              >
-                {useOther ? <span className="pillCheck">✓</span> : null}
-                <span>Other:</span>
-
-                <input
-                  value={otherQuery}
-                  onChange={(e) => {
-                    setOtherQuery(e.target.value);
-                    if (!useOther) setUseOther(true);
-                    setOtherResolved(null);
-                  }}
-                  onBlur={() => resolveOtherToCoinGecko(otherQuery)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      resolveOtherToCoinGecko(otherQuery);
-                    }
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                  placeholder="e.g. Toncoin / TON"
-                  className="input"
-                  style={{
-                    width: 160,
-                    padding: "6px 10px",
-                    borderRadius: 999,
-                  }}
-                />
-
-                {useOther ? (
-                  <span style={{ fontSize: 12, opacity: 0.85 }}>
-                    
-                  </span>
-                ) : null}
-              </button>
+    <Shell
+      title="Today's Dashboard"
+      right={
+        <div className="row">
+          <Button
+            variant="danger"
+            onClick={() => {
+              logout();
+              nav("/login");
+            }}
+          >
+            Logout
+          </Button>
+        </div>
+      }
+    >
+      <div className="dashboardGrid2x2">
+        <Section
+          title="Coin Prices"
+          headerRight={
+            <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+              <RefreshIconButton
+                onClick={() => refresh("prices")}
+                loading={!!refreshBusy["prices"]}
+                title="Refresh prices"
+              />
+              <VoteBar
+                selected={votes["prices::prices_block"] || 0}
+                disabled={!!voteBusy["prices::prices_block"]}
+                onUp={() => vote("prices", "prices_block", 1)}
+                onDown={() => vote("prices", "prices_block", -1)}
+              />
             </div>
+          }
+        >
+          {prices?.error ? <div className="badge">{prices.error}</div> : null}
 
-            <div className="hint">Pick at least 1</div>
+          <div className="pricesTable">
+            {pricesEntries.length ? (
+              pricesEntries.map(([coinId, v]) => {
+                const name = pricesMetaById[coinId]?.name || coinId;
+                const usd = Number(v?.usd ?? 0);
+                const ch = v?.usd_24h_change;
+
+                const hasChange = typeof ch === "number" && Number.isFinite(ch);
+                const up = hasChange ? ch >= 0 : true;
+
+                return (
+                  <div key={coinId} className="pricesRow">
+                    <div className="pricesCoin">
+                      <div className="pricesName">{name}</div>
+                    </div>
+
+                    <div className="pricesRight">
+                      <div className="pricesValue">${usd.toLocaleString()}</div>
+
+                      {hasChange ? (
+                        <div className={`pricesDelta ${up ? "up" : "down"}`} title="Change in the last 24 hours">
+                          <span className="pricesArrow">{up ? "↑" : "↓"}</span>
+                          <span>{Math.abs(ch).toFixed(2)}%</span>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="badge">No price data available.</div>
+            )}
           </div>
-        </div>
+        </Section>
 
-        <div className="card" style={{ background: "transparent" }}>
-          <div className="cardInner">
-            <div className="label">Investor type</div>
-            <div className="row" style={{ flexWrap: "wrap", justifyContent: "flex-start" }}>
-              {TYPES.map((t) => (
-                <Pill
-                  key={t.value}
-                  active={investorType === t.value}
-                  onClick={() => setInvestorType(t.value)}
-                >
-                  {t.label}
-                </Pill>
-              ))}
+        <Section
+          title="AI Insight of the Day"
+          headerRight={
+            <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+              <RefreshIconButton
+                onClick={() => refresh("ai_insight")}
+                loading={!!refreshBusy["ai_insight"]}
+                title="Refresh AI insight"
+              />
+              <VoteBar
+                selected={votes["ai_insight::today_insight"] || 0}
+                disabled={!!voteBusy["ai_insight::today_insight"]}
+                onUp={() => vote("ai_insight", "today_insight", 1)}
+                onDown={() => vote("ai_insight", "today_insight", -1)}
+              />
             </div>
-            <div className="hint">Pick exactly 1</div>
+          }
+        >
+          {ai?.error ? <div className="badge">{ai.error}</div> : null}
+          <div className="insightBody">
+            <div className="insightText">{ai?.data || "No insight available."}</div>
           </div>
-        </div>
+        </Section>
 
-        <div className="card" style={{ background: "transparent" }}>
-          <div className="cardInner">
-            <div className="label">Content</div>
-            <div className="row" style={{ flexWrap: "wrap", justifyContent: "flex-start" }}>
-              {CONTENT_TYPES.map((c) => (
-                <Pill
-                  key={c.value}
-                  active={contentType.includes(c.value)}
-                  onClick={() => setContentType((p) => toggle(p, c.value))}
-                >
-                  {c.label}
-                </Pill>
-              ))}
+        <Section
+          title="Market News"
+          headerRight={
+            <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+              <RefreshIconButton onClick={() => refresh("news")} loading={!!refreshBusy["news"]} title="Refresh news" />
             </div>
-            <div className="hint">Pick at least 1</div>
-          </div>
-        </div>
+          }
+        >
+          {news?.error ? <div className="badge">{news.error}</div> : null}
 
-        {err ? <div className="error">{err}</div> : null}
+          <div className="newsList">
+            {chart ? (
+              <div className="tile">
+                <div className="tileHeader">
+                  <div className="tileTitle">Past 7 Days Prices</div>
+                  <VoteBar
+                    selected={votes["chart::price_chart"] || 0}
+                    disabled={!!voteBusy["chart::price_chart"]}
+                    onUp={() => vote("chart", "price_chart", 1)}
+                    onDown={() => vote("chart", "price_chart", -1)}
+                  />
+                </div>
+                <MiniLineChart chart={chart} />
+              </div>
+            ) : null}
 
-        <div className="formActions">
-          <div className="formActionsRight">
-            <Button variant="primary" type="submit" disabled={!isValid || saving}>
-              {saving ? "Saving…" : "Save"}
-            </Button>
+            {fun ? (
+              <div className="tile">
+                <div className="tileHeader">
+                  <div className="tileTitle">Fun</div>
+                  <VoteBar
+                    selected={votes["fun::daily_fun"] || 0}
+                    disabled={!!voteBusy["fun::daily_fun"]}
+                    onUp={() => vote("fun", "daily_fun", 1)}
+                    onDown={() => vote("fun", "daily_fun", -1)}
+                  />
+                </div>
+                <div className="funText">{fun.text}</div>
+              </div>
+            ) : null}
+
+            {newsItems.length ? (
+              newsItems.map((n, idx) => {
+                // Prefer server-provided stable id; fallback to title.
+                const itemKey = n.id || n.title || String(idx);
+                const voteKey = `news::${itemKey}`;
+
+                // Summary support: backend now returns `summary` (optional).
+                const summary = (n.summary || "").trim();
+
+                return (
+                  <div key={itemKey} className="tile">
+                    {n.url ? (
+                      <a href={n.url} target="_blank" rel="noreferrer" className="tileTitle">
+                        {n.title}
+                      </a>
+                    ) : (
+                      <div className="tileTitle">{n.title}</div>
+                    )}
+
+                    <div className="tileMeta">{formatDate(n.published_at)}</div>
+
+                    {summary ? <div className="tileSummary">{summary}</div> : null}
+
+                    <div className="metaFooter">
+                      <VoteBar
+                        selected={votes[voteKey] || 0}
+                        disabled={!!voteBusy[voteKey]}
+                        onUp={() => vote("news", itemKey, 1)}
+                        onDown={() => vote("news", itemKey, -1)}
+                      />
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="badge">No news available.</div>
+            )}
           </div>
-        </div>
-      </form>
+        </Section>
+
+        <Section
+          title="Meme"
+          headerRight={
+            <div className="row" style={{ gap: 8, justifyContent: "flex-end" }}>
+              <RefreshIconButton onClick={() => refresh("meme")} loading={!!refreshBusy["meme"]} title="Refresh meme" />
+              <VoteBar
+                selected={votes[`meme::${meme?.url || "meme"}`] || 0}
+                disabled={!!voteBusy[`meme::${meme?.url || "meme"}`]}
+                onUp={() => vote("meme", meme?.url || "meme", 1)}
+                onDown={() => vote("meme", meme?.url || "meme", -1)}
+              />
+            </div>
+          }
+        >
+          {meme?.url ? (
+            <div className="memeWrap">
+              <img src={meme.url} alt="meme" className="memeImgFull" />
+              <div className="memeCaption">{meme?.title || "Daily crypto meme"}</div>
+            </div>
+          ) : (
+            <div className="badge">No meme</div>
+          )}
+        </Section>
+      </div>
     </Shell>
   );
 }

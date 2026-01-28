@@ -762,3 +762,11 @@ body.theme-night .success{
   flex: 0 0 auto;
   margin-left: auto;
 }
+
+.tileSummary {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.35;
+  opacity: 0.85;
+  white-space: normal;
+}

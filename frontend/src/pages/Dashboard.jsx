@@ -398,9 +398,11 @@ export default function Dashboard() {
                     </a>
                   ) : (
                     <div className="tileTitle">{n.title}</div>
+                    
                   )}
 
                   <div className="tileMeta">{formatDate(n.published_at)}</div>
+                  {n.summary ? <div className="tileSummary">{n.summary}</div> : null}
 
                   <div className="metaFooter">
                     <VoteBar
