@@ -674,6 +674,11 @@ def me(user_id: int = Depends(get_user_id)):
 # =========================================================
 @app.post("/onboarding")
 async def save_onboarding(data: OnboardingReq, user_id: int = Depends(get_user_id)):
+    """
+    Saves user onboarding preferences.
+    Assumption: frontend sends only valid CoinGecko-style ids (including "Other" only if resolved).
+    This endpoint therefore validates and persists the ids as-is (no CoinGecko network calls here).
+    """
     if data.investor_type not in ALLOWED_INVESTOR_TYPES:
         raise HTTPException(400, "Invalid investor_type")
 
@@ -685,41 +690,31 @@ async def save_onboarding(data: OnboardingReq, user_id: int = Depends(get_user_i
     resolved_ids: list[str] = []
     warnings: list[str] = []
 
-    # You currently allow free-text -> resolve with CoinGecko search
-    ALLOW_FREE_TEXT = True
+    # Accept only normalized ids provided by the client.
+    # Basic sanity validation prevents storing garbage in DB.
+    for a in raw_assets:
+        s_id = str(a).strip().lower()
+        if not s_id:
+            continue
 
-    KNOWN_COINGECKO_IDS = {
-        "bitcoin", "ethereum", "solana", "ripple", "cardano", "dogecoin",
-        "binancecoin", "tether", "avalanche-2", "chainlink", "polkadot", "the-open-network",
-    }
+        # Allow typical CoinGecko ids: lowercase letters/numbers/dashes, length-limited.
+        # Examples: "bitcoin", "avalanche-2", "banana-tape-wall", "the-open-network"
+        if not re.fullmatch(r"[a-z0-9-]{2,64}", s_id):
+            warnings.append(f'Invalid coin id "{s_id}".')
+            continue
 
-    async with httpx.AsyncClient(timeout=12) as client:
-        for a in raw_assets:
-            s = str(a).strip()
-            if not s:
-                continue
+        resolved_ids.append(s_id)
 
-            s_id = s.lower()
-
-            if s_id in KNOWN_COINGECKO_IDS:
-                resolved_ids.append(s_id)
-                continue
-
-            if ALLOW_FREE_TEXT:
-                found = await coingecko_search_first_id(client, s)
-                if found and found.get("id"):
-                    resolved_ids.append(found["id"])
-                else:
-                    warnings.append(f'Could not recognize "{s}" as a coin.')
-            else:
-                warnings.append(f'Invalid coin id "{s}".')
-
-    # dedupe keep order
+    # Dedupe while keeping order
     seen = set()
     resolved_ids = [x for x in resolved_ids if not (x in seen or seen.add(x))]
 
     if not resolved_ids:
-        return {"saved": False, "message": "Coin not found – please try again", "warnings": (warnings or ["Coin not found – please try again"])}
+        return {
+            "saved": False,
+            "message": "Coin not found – please try again",
+            "warnings": (warnings or ["Coin not found – please try again"]),
+        }
 
     q = text("""
         INSERT INTO user_preferences (user_id, crypto_assets, investor_type, content_type)
@@ -732,7 +727,7 @@ async def save_onboarding(data: OnboardingReq, user_id: int = Depends(get_user_i
                 "user_id": user_id,
                 "crypto_assets": json.dumps(resolved_ids),
                 "investor_type": data.investor_type,
-                "content_type": json.dumps(data.content_type),
+                "content_type": json.dumps(ct),
             })
     except Exception:
         raise HTTPException(status_code=409, detail="Onboarding already completed")

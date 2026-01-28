@@ -7,8 +7,7 @@ import { Button } from "../ui/Form";
 import { useToast } from "../ui/ToastProvider";
 
 /**
- * Static option lists are defined outside the component to keep renders clean
- * and to improve readability/maintainability.
+ * Keep option lists outside the component to avoid recreating arrays on each render.
  */
 const ASSETS = [
   { id: "bitcoin", label: "Bitcoin" },
@@ -45,11 +44,7 @@ const CONTENT_TYPES = [
 
 function Pill({ active, onClick, children }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`pill ${active ? "pillActive" : ""}`}
-    >
+    <button type="button" onClick={onClick} className={`pill ${active ? "pillActive" : ""}`}>
       {active ? <span className="pillCheck">✓</span> : null}
       {children}
     </button>
@@ -71,7 +66,7 @@ export default function Onboarding() {
   const [investorType, setInvestorType] = useState("");
   const [contentType, setContentType] = useState([]);
 
-  // "Other" asset (optional). We attempt to resolve it to a CoinGecko coin id for better backend compatibility.
+  // Optional "Other" asset
   const [useOther, setUseOther] = useState(false);
   const [otherQuery, setOtherQuery] = useState("");
   const [otherResolved, setOtherResolved] = useState(null); // { id, name, symbol }
@@ -91,8 +86,8 @@ export default function Onboarding() {
   }, [cryptoAssets, investorType, contentType, useOther, otherValue]);
 
   /**
-   * Resolves a free-text query to a CoinGecko coin id.
-   * This improves the probability that backend price/news will work for the "Other" asset.
+   * Resolve free-text to a CoinGecko coin id (best-effort).
+   * Even if this fails, the server may still resolve it.
    */
   async function resolveOtherToCoinGecko(queryRaw) {
     const q = (queryRaw || "").trim();
@@ -110,13 +105,9 @@ export default function Onboarding() {
       const data = await r.json();
       const best = data?.coins?.[0];
 
-      if (best?.id) {
-        setOtherResolved({ id: best.id, name: best.name, symbol: best.symbol });
-      } else {
-        setOtherResolved(null);
-      }
+      if (best?.id) setOtherResolved({ id: best.id, name: best.name, symbol: best.symbol });
+      else setOtherResolved(null);
     } catch {
-      // Keep UX forgiving: user can still save and let the server try to resolve it.
       setOtherResolved(null);
     } finally {
       setResolvingOther(false);
@@ -127,28 +118,34 @@ export default function Onboarding() {
     e.preventDefault();
     setErr("");
     if (saving) return;
-  
-    // If "Other" is enabled, ensure we have a resolved id before submitting.
+
+    // Ensure client-side resolution finishes before submit (best-effort).
     if (useOther && otherValue && !otherResolved && !resolvingOther) {
       await resolveOtherToCoinGecko(otherValue);
     }
-  
-    // If still resolving or still not resolved, prevent submit (or let the server try).
     if (useOther && resolvingOther) return;
-  
+
     if (!isValid) {
       setErr("Select at least 1 asset, 1 investor type, and 1 content type.");
       return;
     }
-  
+
     try {
       setSaving(true);
-  
+
       const finalAssets = [...cryptoAssets];
+      // Only send "Other" if it was resolved to a CoinGecko id.
+      // This guarantees the backend receives valid ids only.
       if (useOther && otherValue) {
-        finalAssets.push(otherResolved?.id || otherValue); // prefer resolved id
+        if (!otherResolved?.id) {
+          setErr("Coin not found – please try again");
+          push("Coin not found – please try again", "error", 3000);
+          return;
+        }
+        finalAssets.push(otherResolved.id);
       }
-  
+
+
       const res = await api.post(ENDPOINTS.onboarding, {
         crypto_assets: finalAssets,
         investor_type: investorType,
@@ -156,20 +153,17 @@ export default function Onboarding() {
       });
 
       const warnings = res?.data?.warnings || [];
-      const saved = Boolean(res?.data?.saved);
-
-      // Show any server-side resolution messages (most reliable source of truth).
       warnings.forEach((w) => push(w, "info", 3500));
 
-      if (!saved) {
-        const msg = res?.data?.message || "Please choose at least one valid asset.";
+      if (!res?.data?.saved) {
+        const msg = res?.data?.message || "Coin not found – please try again";
         setErr(msg);
         push(msg, "error", 3500);
         return;
       }
 
-      push("Saved! Your choices will personalize the dashboard.", "success", 2500);
-      setTimeout(() => nav("/dashboard"), 700);
+      push("Saved. Redirecting to dashboard…", "success", 2500);
+      setTimeout(() => nav("/dashboard"), 600);
     } catch (e2) {
       const msg = e2?.response?.data?.detail || "Failed to save onboarding";
       setErr(msg);
@@ -181,7 +175,7 @@ export default function Onboarding() {
 
   const otherStatusText = useMemo(() => {
     if (!useOther) return "";
-    if (!otherValue) return "";
+    if (!otherValue) return "Type a coin name or ticker.";
     if (resolvingOther) return "Checking CoinGecko…";
     if (otherResolved?.id) return `Matched: ${otherResolved.name} (${String(otherResolved.symbol || "").toUpperCase()})`;
     return "Not matched.";
@@ -190,7 +184,6 @@ export default function Onboarding() {
   return (
     <Shell title="Personalize your feed" subtitle="Choose assets, style, and the content you want.">
       <form onSubmit={onSubmit} className="grid" style={{ gap: 18 }}>
-        {/* Assets */}
         <div className="card" style={{ background: "transparent" }}>
           <div className="cardInner">
             <div className="label">Crypto assets</div>
@@ -206,7 +199,6 @@ export default function Onboarding() {
                 </Pill>
               ))}
 
-              {/* "Other" is separated from input to avoid nested interactive elements */}
               <Pill
                 active={useOther}
                 onClick={() => {
@@ -251,7 +243,6 @@ export default function Onboarding() {
           </div>
         </div>
 
-        {/* Investor type */}
         <div className="card" style={{ background: "transparent" }}>
           <div className="cardInner">
             <div className="label">Investor type</div>
@@ -266,7 +257,6 @@ export default function Onboarding() {
           </div>
         </div>
 
-        {/* Content */}
         <div className="card" style={{ background: "transparent" }}>
           <div className="cardInner">
             <div className="label">Content</div>
@@ -289,10 +279,9 @@ export default function Onboarding() {
 
         <div className="formActions">
           <div className="formActionsRight">
-          <Button variant="primary" type="submit" disabled={!isValid || saving || resolvingOther}>
-            {saving ? "Saving…" : "Save"}
-          </Button>
-
+            <Button variant="primary" type="submit" disabled={!isValid || saving || resolvingOther}>
+              {saving ? "Saving…" : "Save"}
+            </Button>
           </div>
         </div>
       </form>
