@@ -107,6 +107,8 @@ export default function Dashboard() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [refreshBusy, setRefreshBusy] = useState({}); // section -> true
+  const [dashboardId, setDashboardId] = useState(null);
+
 
   // persistent selection (in-session)
   const [votes, setVotes] = useState({}); // key -> 1 / -1
@@ -117,8 +119,9 @@ export default function Dashboard() {
     try {
       const d = await getDashboard();
       setData(d);
+      setDashboardId(d.dashboard_id);
 
-      const todayVotes = await getVotesToday();
+      const todayVotes = await getVotesToday({ dashboard_id: d.dashboard_id });
       const map = {};
       for (const v of todayVotes) {
         map[`${v.section}::${v.item}`] = v.value;
@@ -141,9 +144,10 @@ export default function Dashboard() {
     try {
       const d = await refreshSection(section);
       setData(d);
+      setDashboardId(d.dashboard_id);
 
       // reload today's votes (content may change)
-      const todayVotes = await getVotesToday();
+      const todayVotes = await getVotesToday({ dashboard_id: d.dashboard_id });
       const map = {};
       for (const v of todayVotes) {
         map[`${v.section}::${v.item}`] = v.value;
@@ -176,7 +180,7 @@ export default function Dashboard() {
     setVoteBusy((p) => ({ ...p, [key]: true }));
 
     try {
-      await saveVote({ section, item, value });
+      await saveVote({ dashboard_id: dashboardId, section, item, value });
     } catch {
       setVotes((p) => ({ ...p, [key]: current }));
     } finally {
@@ -377,7 +381,7 @@ export default function Dashboard() {
             ) : null}
 
             {(news?.data || []).slice(0, 6).map((n, idx) => {
-              const itemKey = n.title || String(idx);
+              const itemKey = n.id || n.title || String(idx);
               const k = `news::${itemKey}`;
               console.log("NEWS ITEM:", n);
 

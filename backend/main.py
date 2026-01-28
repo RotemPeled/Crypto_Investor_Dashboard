@@ -14,6 +14,7 @@ import httpx
 from fastapi.middleware.cors import CORSMiddleware
 from db import init_db, engine
 from pathlib import Path
+import hashlib
 
 load_dotenv()
 app = FastAPI()
@@ -55,9 +56,14 @@ class OnboardingReq(BaseModel):
     content_type: list[str]
 
 class VoteReq(BaseModel):
+    dashboard_id: int
     section: str  
     item: str 
     value: int      
+
+def stable_news_id(source: str, title: str | None, published_at: str | None) -> str:
+    base = f"{source}|{title or ''}|{published_at or ''}".strip()
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()[:16]
 
 def load_meme_catalog():
     global MEME_CATALOG
@@ -123,53 +129,36 @@ def load_user_preferences(conn, user_id: int):
 
 def load_daily_dashboard(conn, user_id: int, day: date):
     q = text("""
-        SELECT sections
+        SELECT id, sections
         FROM daily_dashboard
         WHERE user_id = :user_id AND day = :day
+        ORDER BY created_at DESC
         LIMIT 1
     """)
     row = conn.execute(q, {"user_id": user_id, "day": day}).fetchone()
     if row is None:
         return None
 
-    sections = row.sections
+    sections = row[1]
     if isinstance(sections, str):
         sections = json.loads(sections)
 
-    return sections
+    return {"dashboard_id": int(row[0]), "sections": sections}
 
-def save_daily_dashboard(conn, user_id: int, day: date, sections: dict):
+
+def save_daily_dashboard(conn, user_id: int, day: date, sections: dict) -> int:
     q = text("""
         INSERT INTO daily_dashboard (user_id, day, sections)
         VALUES (:user_id, :day, CAST(:sections AS jsonb))
-        ON CONFLICT (user_id, day) DO NOTHING
+        RETURNING id
     """)
-    conn.execute(q, {
+    row = conn.execute(q, {
         "user_id": user_id,
         "day": day,
         "sections": json.dumps(sections),
-    })
+    }).fetchone()
     conn.commit()
-
-def update_daily_section(conn, user_id: int, day: date, section_key: str, section_value):
-    q = text("""
-        UPDATE daily_dashboard
-        SET sections = jsonb_set(
-            sections,
-            ARRAY[:section_key],
-            CAST(:value AS jsonb),
-            true
-        )
-        WHERE user_id = :user_id AND day = :day
-    """)
-    conn.execute(q, {
-        "user_id": user_id,
-        "day": day,
-        "section_key": section_key,
-        "value": json.dumps(section_value),
-    })
-    conn.commit()
-
+    return int(row[0])
 
 def pick_meme(prefs: dict, exclude_ids_or_urls: set[str] | None = None):
     exclude_ids_or_urls = exclude_ids_or_urls or set()
@@ -378,9 +367,14 @@ async def fetch_news(client: httpx.AsyncClient, prefs: dict, limit: int = 5):
 
             scored.sort(key=lambda x: x[0], reverse=True)
             news["data"] = [
-                {"title": i.get("title"), "published_at": i.get("published_at")}
+                {
+                    "id": stable_news_id("cryptopanic", i.get("title"), i.get("published_at")),
+                    "title": i.get("title"),
+                    "published_at": i.get("published_at"),
+                }
                 for (_, i) in scored[:limit]
             ]
+
         else:
             news["error"] = f"CryptoPanic status {rn.status_code}"
     except Exception as e:
@@ -735,10 +729,14 @@ async def dashboard(user_id: int = Depends(get_user_id)):
     today = date.today()
 
     with engine.connect() as conn:
-        existing_sections = load_daily_dashboard(conn, user_id, today)
+        existing = load_daily_dashboard(conn, user_id, today)
 
-    if existing_sections is not None:
-        return {"preferences": prefs, "sections": existing_sections}
+    if existing is not None:
+        return {
+            "preferences": prefs,
+            "dashboard_id": existing["dashboard_id"],
+            "sections": existing["sections"],
+        }
 
     if DEV_MODE:
         sections = {
@@ -797,9 +795,9 @@ async def dashboard(user_id: int = Depends(get_user_id)):
 
 
         with engine.connect() as conn:
-            save_daily_dashboard(conn, user_id, today, sections)
+            dashboard_id = save_daily_dashboard(conn, user_id, today, sections)
 
-        return {"preferences": prefs, "sections": sections}
+        return {"preferences": prefs, "dashboard_id": dashboard_id, "sections": sections}
 
     asset_ids = [str(x).strip().lower() for x in (prefs["crypto_assets"] or []) if str(x).strip()]
     investor_type = prefs["investor_type"]
@@ -856,9 +854,10 @@ async def dashboard(user_id: int = Depends(get_user_id)):
 
 
     with engine.connect() as conn:
-        save_daily_dashboard(conn, user_id, today, sections)
+        dashboard_id = save_daily_dashboard(conn, user_id, today, sections)
 
-    return {"preferences": prefs, "sections": sections}
+    return {"preferences": prefs, "dashboard_id": dashboard_id, "sections": sections}
+
 
 @app.post("/dashboard/refresh/{section}")
 async def refresh_section(
@@ -903,7 +902,7 @@ async def refresh_section(
         elif section == "ai_insight":
             new_value = await fetch_ai_insight(client, investor_type, assets)
         elif section == "meme":
-            current = (existing or {}).get("meme") or {}
+            current = (existing.get("sections") or {}).get("meme") or {}
             exclude = set()
             if isinstance(current, dict):
                 if current.get("id"): exclude.add(str(current["id"]))
@@ -923,13 +922,16 @@ async def refresh_section(
             new_value["error"] = "Empty data – skipped DB update"
             return {"preferences": prefs, "sections": existing, "updated": section, "skipped": True}
 
-    with engine.connect() as conn:
-        update_daily_section(conn, user_id, today, section, new_value)
+    # build updated sections in memory from latest snapshot
+    latest = existing["sections"] if isinstance(existing, dict) else (existing or {})
+    latest = dict(latest)
+    latest[section] = new_value
 
     with engine.connect() as conn:
-        updated_sections = load_daily_dashboard(conn, user_id, today)
+        dashboard_id = save_daily_dashboard(conn, user_id, today, latest)
 
-    return {"preferences": prefs, "sections": updated_sections, "updated": section}
+    return {"preferences": prefs, "dashboard_id": dashboard_id, "sections": latest, "updated": section}
+
 
 @app.post("/votes")
 def vote(data: VoteReq, user_id: int = Depends(get_user_id)):
@@ -937,16 +939,16 @@ def vote(data: VoteReq, user_id: int = Depends(get_user_id)):
         raise HTTPException(400, "value must be 1 or -1")
 
     q = text("""
-        INSERT INTO user_votes (user_id, day, section, item, value)
-        VALUES (:user_id, CURRENT_DATE, :section, :item, :value)
-        ON CONFLICT (user_id, day, section, item)
+        INSERT INTO user_votes (user_id, day, dashboard_id, section, item, value)
+        VALUES (:user_id, CURRENT_DATE, :dashboard_id, :section, :item, :value)
+        ON CONFLICT (user_id, dashboard_id, section, item)
         DO UPDATE SET value = EXCLUDED.value, created_at = now()
     """)
-
 
     with engine.connect() as conn:
         conn.execute(q, {
             "user_id": user_id,
+            "dashboard_id": data.dashboard_id,
             "section": data.section,
             "item": data.item,
             "value": data.value
@@ -956,7 +958,12 @@ def vote(data: VoteReq, user_id: int = Depends(get_user_id)):
     return {"message": "vote saved"}
 
 @app.get("/votes")
-def get_votes(date: str = Query("today"), user_id: int = Depends(get_user_id)):
+def get_votes(
+    date: str = Query("today"),
+    dashboard_id: int | None = None,
+    user_id: int = Depends(get_user_id),
+):
+
     q = """
         SELECT section, item, value
         FROM user_votes
@@ -969,6 +976,10 @@ def get_votes(date: str = Query("today"), user_id: int = Depends(get_user_id)):
     else:
         q += " AND day = :day"
         params["day"] = date  # expects YYYY-MM-DD
+
+    if dashboard_id is not None:
+        q += " AND dashboard_id = :dashboard_id"
+        params["dashboard_id"] = dashboard_id
 
     with engine.connect() as conn:
         rows = conn.execute(text(q), params).fetchall()
