@@ -395,10 +395,12 @@ async def fetch_news(client: httpx.AsyncClient, prefs: dict, limit: int = 5):
         return news
 
     try:
-        rn = await client.get(
-            "https://cryptopanic.com/api/developer/v2/posts/",
-            params={"auth_token": token},
-        )
+        url = "https://cryptopanic.com/feed/"
+        rn = await client.get(url, timeout=15.0)
+
+        print("CryptoPanic URL:", url)
+        print("CryptoPanic status:", rn.status_code)
+        print("CryptoPanic raw body (first 500 chars):", rn.text[:500])
 
         if rn.status_code == 200:
             data = (rn.json() or {}).get("results") or []
