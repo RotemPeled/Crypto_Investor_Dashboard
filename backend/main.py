@@ -479,6 +479,10 @@ async def fetch_news(client: httpx.AsyncClient, prefs: dict, limit: int = 5):
                 "source": "fallback",
             }
         ]
+    print("CryptoPanic request token len:", len(token or ""))
+    print("CryptoPanic status:", rn.status_code)
+    print("CryptoPanic body:", (rn.text or "")[:300])
+
 
     return news
 
