@@ -818,12 +818,17 @@ async def dashboard(user_id: int = Depends(get_user_id)):
     if prefs is None:
         raise HTTPException(400, "Onboarding not completed")
 
-    today = date.today()
+    today = datetime.utcnow().date()
+
 
     with engine.connect() as conn:
         existing = load_daily_dashboard(conn, user_id, today)
+    print(f"[DASHBOARD] user={user_id} day={today} existing={'yes' if existing else 'no'} at={datetime.utcnow().isoformat()}Z")
+
     if existing is not None:
         return {"preferences": prefs, "dashboard_id": existing["dashboard_id"], "sections": existing["sections"]}
+    print("[DASHBOARD] building sections from external APIs (no DB snapshot yet)")
+
 
     # DEV_MODE: return fast mock without external calls
     if DEV_MODE:
@@ -928,7 +933,8 @@ async def refresh_section(section: str, user_id: int = Depends(get_user_id)):
     if prefs is None:
         raise HTTPException(400, "Onboarding not completed")
 
-    today = date.today()
+    today = datetime.utcnow().date()
+    print(f"[REFRESH] user={user_id} section={section} day={today} at={datetime.utcnow().isoformat()}Z")
 
     with engine.connect() as conn:
         existing = load_daily_dashboard(conn, user_id, today)
@@ -948,6 +954,9 @@ async def refresh_section(section: str, user_id: int = Depends(get_user_id)):
             include_fun = "fun" in content_types
             news_limit = max(2, 5 - (1 if include_charts else 0) - (1 if include_fun else 0))
             new_value = await fetch_news(client, prefs, limit=news_limit)
+            titles = [x.get("title") for x in (new_value.get("data") or [])][:3] if isinstance(new_value, dict) else []
+            print(f"[NEWS] fetched {len(new_value.get('data') or []) if isinstance(new_value, dict) else 0} items. top3={titles}")
+
 
         elif section == "ai_insight":
             new_value = await fetch_ai_insight(client, investor_type, assets)
