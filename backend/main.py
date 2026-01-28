@@ -308,7 +308,7 @@ async def fetch_prices(client: httpx.AsyncClient, assets: list[str]):
         base = coingecko_base_url()
         params = {"ids": ",".join(ids), "vs_currencies": "usd", "include_24hr_change": "true"}
         cg_key = os.getenv("COINGECKO_API_KEY")
-        headers = {"x-cg-pro-api-key": cg_key} if cg_key else {}
+        headers = {"x-cg-demo-api-key": os.getenv("COINGECKO_API_KEY")} if os.getenv("COINGECKO_API_KEY") else {}
 
         r = await client.get(f"{base}/simple/price", params=params, headers=headers)
         if r.status_code == 200:
@@ -341,7 +341,7 @@ async def fetch_price_chart(client: httpx.AsyncClient, assets: list[str], days: 
 
     base = coingecko_base_url()
     cg_key = os.getenv("COINGECKO_API_KEY")
-    headers = {"x-cg-pro-api-key": cg_key} if cg_key else {}
+    headers = {"x-cg-demo-api-key": os.getenv("COINGECKO_API_KEY")} if os.getenv("COINGECKO_API_KEY") else {}
 
     failed = []
 
@@ -376,7 +376,7 @@ async def fetch_price_chart(client: httpx.AsyncClient, assets: list[str], days: 
 async def coingecko_search_first_id(client: httpx.AsyncClient, query: str):
     base = coingecko_base_url()
     cg_key = os.getenv("COINGECKO_API_KEY")
-    headers = {"x-cg-pro-api-key": cg_key} if cg_key else {}
+    headers = {"x-cg-demo-api-key": os.getenv("COINGECKO_API_KEY")} if os.getenv("COINGECKO_API_KEY") else {}
 
     r = await client.get(f"{base}/search", params={"query": query}, headers=headers)
     if r.status_code != 200:
