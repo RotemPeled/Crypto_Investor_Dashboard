@@ -307,7 +307,6 @@ async def fetch_prices(client: httpx.AsyncClient, assets: list[str]):
     try:
         base = coingecko_base_url()
         params = {"ids": ",".join(ids), "vs_currencies": "usd", "include_24hr_change": "true"}
-        cg_key = os.getenv("COINGECKO_API_KEY")
         headers = {"x-cg-demo-api-key": os.getenv("COINGECKO_API_KEY")} if os.getenv("COINGECKO_API_KEY") else {}
 
         r = await client.get(f"{base}/simple/price", params=params, headers=headers)
@@ -393,132 +392,127 @@ async def coingecko_search_first_id(client: httpx.AsyncClient, query: str):
         "symbol": (top.get("symbol") or "").upper(),
         "query": query,
     }
-
-
 async def fetch_news(client: httpx.AsyncClient, prefs: dict, limit: int = 5):
     """
-    CryptoPanic API with simple relevance scoring.
-    Falls back to a static message if token missing.
+    Fetch crypto news from CryptoPanic Developer API (v2).
+
+    - Uses public usage mode (public=true)
+    - Returns a stable structure: {source, data, error}
+    - Does not expose url/source fields (not needed by the app)
     """
+
     news = {"source": "cryptopanic", "data": [], "error": None}
     token = os.getenv("CRYPTOPANIC_TOKEN")
 
     if not token:
-        news["error"] = "CRYPTOPANIC_TOKEN missing (showing fallback)"
-        news["data"] = [{"id": stable_news_id("fallback", "No CryptoPanic token", None), "title": "No CryptoPanic token configured", "published_at": None}]
+        news["error"] = "CRYPTOPANIC_TOKEN missing"
+        news["source"] = "static"
+        news["data"] = [{
+            "id": stable_news_id("fallback", "No CryptoPanic token", None),
+            "title": "News unavailable",
+            "summary": "CryptoPanic token is not configured.",
+            "published_at": None,
+        }]
         return news
 
     try:
-        url = "https://cryptopanic.com/api/v1/posts/"
+        url = "https://cryptopanic.com/api/developer/v2/posts/"
         params = {
             "auth_token": token,
             "public": "true",
             "kind": "news",
             "filter": "hot",
-            "currencies": "BTC,ETH",
+            "currencies": "BTC,ETH",  # unchanged
         }
-        headers = {"User-Agent": "crypto-investor-dashboard/1.0"}
+        headers = {
+            "User-Agent": "crypto-investor-dashboard/1.0",
+            "Accept": "application/json",
+        }
 
-        rn = await client.get(url, params=params, headers=headers, timeout=15.0)
+        response = await client.get(url, params=params, headers=headers, timeout=15.0)
+        content_type = (response.headers.get("content-type") or "").lower()
 
-        ct = (rn.headers.get("content-type") or "").lower()
-        print("CryptoPanic status:", rn.status_code)
-        print("CryptoPanic content-type:", ct)
-        print("CryptoPanic body head:", rn.text[:300])
-
-        if rn.status_code != 200:
-            raise RuntimeError(f"CryptoPanic status {rn.status_code}")
-
-        if "application/json" not in ct:
-            raise RuntimeError(f"CryptoPanic non-JSON response (ct={ct})")
-
-        payload = rn.json() or {}
-        data = payload.get("results") or []
-
-
-
-        if rn.status_code == 200:
-            data = (rn.json() or {}).get("results") or []
-            assets = set((prefs.get("crypto_assets") or []))
-            content_types = set((prefs.get("content_type") or []))
-
-            scored = []
-            for item in data:
-                title = (item.get("title") or "").lower()
-                score = 0
-
-                for a in assets:
-                    if a.lower() in title:
-                        score += 3
-
-                if "regulation" in content_types and any(x in title for x in ["sec", "law", "court", "regulation"]):
-                    score += 2
-                if "security" in content_types and any(x in title for x in ["hack", "exploit", "breach"]):
-                    score += 2
-                if "market_news" in content_types and any(x in title for x in ["price", "market", "surge", "drop"]):
-                    score += 1
-                if "social" in content_types and any(x in title for x in ["twitter", "elon", "sentiment"]):
-                    score += 1
-
-                scored.append((score, item))
-
-            scored.sort(key=lambda x: x[0], reverse=True)
-            news["data"] = [
-                {
-                    "id": stable_news_id("cryptopanic", i.get("title"), i.get("published_at")),
-                    "title": i.get("title"),
-                    "summary": (
-                        i.get("description")
-                        or (i.get("metadata") or {}).get("description")
-                        or (i.get("metadata") or {}).get("summary")
-                        or i.get("text")
-                        or ""
-                    ),
-                    "url": i.get("url") or i.get("link"),
-                    "published_at": i.get("published_at"),
-                    "source": (i.get("source") or {}).get("title") or (i.get("source") or {}).get("domain"),
-                }
-                for (_, i) in scored[:limit]
-            ]
-
-        else:
-            news["error"] = f"CryptoPanic status {rn.status_code} (showing fallback)"
+        if response.status_code != 200:
+            news["error"] = f"CryptoPanic status {response.status_code}"
             news["source"] = "static"
-            news["data"] = [
-                {
-                    "id": stable_news_id("static", "Crypto markets: daily roundup", None),
-                    "title": "Crypto markets: daily roundup (fallback)",
-                    "summary": "CryptoPanic is unavailable right now. This is a fallback item for UX stability.",
-                    "url": "https://cryptopanic.com",   # אפשר לשים גם None
-                    "published_at": None,
-                    "source": "fallback",
-                },
-                {
-                    "id": stable_news_id("static", "Watchlist: risk & volatility", None),
-                    "title": "Watchlist: risk & volatility (fallback)",
-                    "summary": "Focus on volatility, risk sizing, and major catalysts today.",
-                    "url": None,
-                    "published_at": None,
-                    "source": "fallback",
-                },
-            ]
+            news["data"] = [{
+                "id": stable_news_id("fallback", "News fetch failed", None),
+                "title": "News temporarily unavailable",
+                "summary": "Unable to fetch crypto news at the moment.",
+                "published_at": None,
+            }]
+            return news
+
+        if "application/json" not in content_type:
+            news["error"] = "CryptoPanic returned non-JSON response"
+            news["source"] = "static"
+            news["data"] = [{
+                "id": stable_news_id("fallback", "News blocked", None),
+                "title": "News temporarily unavailable",
+                "summary": "Unexpected response from news provider.",
+                "published_at": None,
+            }]
+            return news
+
+        payload = response.json() or {}
+        items = payload.get("results") or []
+
+        assets = set((prefs.get("crypto_assets") or []))
+        content_types = set((prefs.get("content_type") or []))
+
+        scored = []
+        for item in items:
+            title = (item.get("title") or "").lower()
+            score = 0
+
+            for a in assets:
+                if a.lower() in title:
+                    score += 3
+
+            if "market_news" in content_types and any(
+                k in title for k in ["price", "market", "surge", "drop"]
+            ):
+                score += 1
+
+            if "security" in content_types and any(
+                k in title for k in ["hack", "exploit", "breach"]
+            ):
+                score += 2
+
+            if "regulation" in content_types and any(
+                k in title for k in ["sec", "law", "court", "regulation"]
+            ):
+                score += 2
+
+            scored.append((score, item))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        news["data"] = [{
+            "id": stable_news_id("cryptopanic", i.get("title"), i.get("published_at")),
+            "title": i.get("title"),
+            "summary": (
+                i.get("description")
+                or (i.get("metadata") or {}).get("description")
+                or (i.get("metadata") or {}).get("summary")
+                or i.get("text")
+                or ""
+            ),
+            "published_at": i.get("published_at"),
+        } for (_, i) in scored[:limit]]
+
+        return news
 
     except Exception as e:
-        news["error"] = f"{e} (showing fallback)"
+        news["error"] = str(e)
         news["source"] = "static"
-        news["data"] = [
-            {
-                "id": stable_news_id("fallback", "News fetch failed", None),
-                "title": "News fetch failed (fallback)",
-                "summary": "Showing fallback items.",
-                "url": None,
-                "published_at": None,
-                "source": "fallback",
-            }
-        ]
-
-    return news
-
+        news["data"] = [{
+            "id": stable_news_id("fallback", "News fetch error", None),
+            "title": "News temporarily unavailable",
+            "summary": "An error occurred while fetching news.",
+            "published_at": None,
+        }]
+        return news
 
 async def fetch_ai_insight(client: httpx.AsyncClient, investor_type: str, assets: list[str]):
     """
