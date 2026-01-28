@@ -313,11 +313,12 @@ async def fetch_prices(client: httpx.AsyncClient, assets: list[str]):
         r = await client.get(f"{base}/simple/price", params=params, headers=headers)
         if r.status_code == 200:
             j = r.json() or {}
+            PRICE_CACHE[key_cache] = (now, j)
+
             if not j:
                 prices["error"] = "CoinGecko returned empty data (rate-limit or invalid ids)"
             else:
                 prices["data"] = j
-            PRICE_CACHE[key_cache] = (now, j)
         else:
             prices["error"] = f"CoinGecko status {r.status_code}"
             
@@ -410,18 +411,30 @@ async def fetch_news(client: httpx.AsyncClient, prefs: dict, limit: int = 5):
     try:
         url = "https://cryptopanic.com/api/v1/posts/"
         params = {
-        "auth_token": token,
-        "public": "true",
-        "filter": "hot",
-        "currencies": "BTC,ETH",
-        "kind": "news",
+            "auth_token": token,
+            "public": "true",
+            "kind": "news",
+            "filter": "hot",
+            "currencies": "BTC,ETH",
         }
-        headers={"User-Agent":"crypto-investor-dashboard/1.0"}
-        rn = await client.get(url, params=params, headers=headers, timeout=15.0)
-        data = (rn.json() or {}).get("results") or []
+        headers = {"User-Agent": "crypto-investor-dashboard/1.0"}
 
-        print("status:", rn.status_code)
-        print("body head:", rn.text[:500])
+        rn = await client.get(url, params=params, headers=headers, timeout=15.0)
+
+        ct = (rn.headers.get("content-type") or "").lower()
+        print("CryptoPanic status:", rn.status_code)
+        print("CryptoPanic content-type:", ct)
+        print("CryptoPanic body head:", rn.text[:300])
+
+        if rn.status_code != 200:
+            raise RuntimeError(f"CryptoPanic status {rn.status_code}")
+
+        if "application/json" not in ct:
+            raise RuntimeError(f"CryptoPanic non-JSON response (ct={ct})")
+
+        payload = rn.json() or {}
+        data = payload.get("results") or []
+
 
 
         if rn.status_code == 200:
