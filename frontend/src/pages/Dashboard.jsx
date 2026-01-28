@@ -118,22 +118,18 @@ export default function Dashboard() {
     setErr("");
     try {
       const d = await getDashboard();
+      setDashboardId(d.dashboard_id);
       setData(prev => {
         if (!prev) return d;
-      
         return {
           ...prev,
+          ...d,
           sections: {
-            ...prev.sections,
-            ...d.sections,               
-            sections: {
-              ...prev.sections?.sections,
-              ...d.sections?.sections,   
-            },
+            ...(prev.sections || {}),
+            ...(d.sections || {}),
           },
         };
       });
-      
 
       const todayVotes = await getVotesToday({ dashboard_id: d.dashboard_id });
       const map = {};
@@ -194,7 +190,9 @@ export default function Dashboard() {
     setVoteBusy((p) => ({ ...p, [key]: true }));
 
     try {
-      await saveVote({ dashboard_id: dashboardId, section, item, value });
+      const did = dashboardId ?? data?.dashboard_id;
+      await saveVote({ dashboard_id: did, section, item, value });
+
     } catch {
       setVotes((p) => ({ ...p, [key]: current }));
     } finally {
